@@ -21,6 +21,7 @@ import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.attribute.EntityAttributes;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtList;
@@ -88,10 +89,11 @@ public class AutomatoneEntity extends LivingEntity
     }
 
     // Constructor for the manual entity creation
-    public AutomatoneEntity(World world, Character character) {
+    public AutomatoneEntity(World world, Character character, PlayerEntity owner) {
         super(Player2NPC.AUTOMATONE, world);
         setCharacter(character); // If we got a character, we store it
         init();
+        this.controller.setOwner(owner);
     }
 
     // Interface implementation (just make the getters for the managers and the

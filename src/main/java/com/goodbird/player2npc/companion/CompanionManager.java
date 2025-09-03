@@ -88,7 +88,7 @@ public class CompanionManager implements Component, ServerTickingComponent {
             existingCompanion.teleport(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
                         System.out.println("Teleported existing companion: " + character.name() + " for player " + this._player.getName().getString());
         } else {
-            AutomatoneEntity newCompanion = new AutomatoneEntity(_player.getWorld(), character);
+            AutomatoneEntity newCompanion = new AutomatoneEntity(_player.getWorld(), character, _player);
             newCompanion.refreshPositionAndAngles(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5,
                     _player.getYaw(), 0);
 
