@@ -2,7 +2,7 @@ package com.goodbird.player2npc.companion;
 
 import adris.altoclef.AltoClefController;
 import adris.altoclef.player2api.Character;
-import adris.altoclef.player2api.manager.EventQueueManager;
+import adris.altoclef.player2api.manager.ConversationManager;
 import adris.altoclef.player2api.utils.CharacterUtils;
 import baritone.api.IBaritone;
 import baritone.api.entity.IAutomatone;
@@ -84,7 +84,7 @@ public class AutomatoneEntity extends LivingEntity
         // We initialize the altoclef controller ONLY ON CLIENT SIDE!
         if (!getWorld().isClient && character != null) {
             this.controller = new AltoClefController(IBaritone.KEY.get(this), character, PLAYER2_GAME_ID);
-            EventQueueManager.sendGreeting(this.controller, character);
+            ConversationManager.sendGreeting(this.controller, character);
         }
     }
 
@@ -127,10 +127,10 @@ public class AutomatoneEntity extends LivingEntity
                                                               // initialize the controller with it
             NbtCompound compound = tag.getCompound("character");
             character = CharacterUtils.readFromNBT(compound);
-            if(controller==null) {
+            if (controller == null) {
                 controller = new AltoClefController(IBaritone.KEY.get(this), character, PLAYER2_GAME_ID);
             }
-            EventQueueManager.sendGreeting(controller, character);
+            ConversationManager.sendGreeting(controller, character);
         }
     }
 
