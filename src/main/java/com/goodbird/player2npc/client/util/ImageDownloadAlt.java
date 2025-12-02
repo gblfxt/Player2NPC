@@ -24,8 +24,8 @@ public class ImageDownloadAlt extends ResourceTexture {
     private static final Logger logger = LogManager.getLogger();
     public final File cacheFile;
     private final String imageUrl;
-    private boolean fix64;
-    private Runnable r;
+    private final boolean fix64;
+    private final Runnable r;
     public final Identifier location;
     public boolean uploaded = false;
 
@@ -58,25 +58,20 @@ public class ImageDownloadAlt extends ResourceTexture {
 
     public void load(ResourceManager resourceManager) throws IOException {
         if (this.cacheFile != null && this.cacheFile.isFile()) {
-            logger.debug("Loading http texture from local cache ({})", new Object[]{this.cacheFile});
-            NativeImage image = null;
+            logger.debug("Loading http texture from local cache ({})", this.cacheFile);
 
-            try {
-                image = NativeImage.read(new FileInputStream(this.cacheFile));
+            try (FileInputStream inputStream = new FileInputStream(this.cacheFile);
+                 NativeImage image = NativeImage.read(inputStream)) {
                 this.setImage(this.parseUserSkin(image));
                 return;
             } catch (IOException ioexception) {
-                super.load(resourceManager);
                 logger.error("Couldn't load skin {}", this.cacheFile, ioexception);
             }
         }
 
         if (!this.uploaded) {
-            try {
-                this.uploaded = true;
-                super.load(resourceManager);
-            } catch (Exception ignored) {
-            }
+            this.uploaded = true;
+            super.load(resourceManager);
         }
 
     }
@@ -96,7 +91,7 @@ public class ImageDownloadAlt extends ResourceTexture {
             if (connection.getResponseCode() / 100 == 2 && type.equals("image/png") && (size <= 2000000L || MinecraftClient.getInstance().isIntegratedServerRunning())) {
                 FileUtils.copyInputStreamToFile(connection.getInputStream(), this.cacheFile);
             }
-        } catch (Exception exception) {
+        } catch (IOException | RuntimeException exception) {
             logger.error("Couldn't download http texture", exception);
         } finally {
             if (connection != null) {

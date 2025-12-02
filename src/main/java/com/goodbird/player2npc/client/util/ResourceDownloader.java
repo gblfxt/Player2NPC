@@ -3,6 +3,8 @@ package com.goodbird.player2npc.client.util;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.texture.PlayerSkinProvider;
 import net.minecraft.util.Identifier;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.File;
 import java.util.Collections;
@@ -12,30 +14,31 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
 public class ResourceDownloader {
-    private static final Set<Identifier> active = Collections.synchronizedSet(new HashSet());
+    private static final Logger LOGGER = LogManager.getLogger();
+    private static final Set<Identifier> active = Collections.synchronizedSet(new HashSet<>());
     private static final ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
 
     public ResourceDownloader() {
     }
 
     public static void load(ImageDownloadAlt resource) {
-        if (!active.contains(resource.location)) {
-            active.add(resource.location);
-            executor.execute(() -> {
+        if (!active.add(resource.location)) {
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
                 resource.loadTextureFromServer();
-                MinecraftClient.getInstance().submit(() -> {
-                    MinecraftClient.getInstance().getTextureManager().registerTexture(resource.location, resource);
+                MinecraftClient client = MinecraftClient.getInstance();
+                client.submit(() -> {
+                    client.getTextureManager().registerTexture(resource.location, resource);
                     active.remove(resource.location);
                 });
-
-                try {
-                    Thread.sleep(400L);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-
-            });
-        }
+            } catch (Exception e) {
+                LOGGER.error("Failed to queue skin download for {}", resource.location, e);
+                active.remove(resource.location);
+            }
+        });
     }
 
     public static Identifier getUrlResourceLocation(String url, boolean fixSkin) {

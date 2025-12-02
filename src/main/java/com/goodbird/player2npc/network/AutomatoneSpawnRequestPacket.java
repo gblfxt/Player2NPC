@@ -22,10 +22,10 @@ import org.apache.logging.log4j.Logger;
 
 
 public class AutomatoneSpawnRequestPacket implements FabricPacket {
-   private static final Logger LOGGER = LogManager.getLogger();
-    public static final PacketType<AutomatonSpawnPacket> TYPE = PacketType.create(
-            Player2NPC.SPAWN_REQUEST_PACKET_ID,
-            AutomatonSpawnPacket::new
+    private static final Logger LOGGER = LogManager.getLogger();
+    public static final PacketType<AutomatoneSpawnRequestPacket> TYPE = PacketType.create(
+        Player2NPC.SPAWN_REQUEST_PACKET_ID,
+        AutomatoneSpawnRequestPacket::new
     );
 
     private final Character character;
@@ -57,8 +57,10 @@ public class AutomatoneSpawnRequestPacket implements FabricPacket {
     public static void handle(MinecraftServer var1, ServerPlayerEntity var2, ServerPlayNetworkHandler var3, PacketByteBuf var4, PacketSender var5) {
         AutomatoneSpawnRequestPacket packet = new AutomatoneSpawnRequestPacket(var4);
         LOGGER.info("AutomatoneSpawnReqPacket C2S/ character={}", packet.character);
-        if(packet.character != null){
+        if (packet.character != null) {
             var1.execute(() -> CompanionManager.KEY.get(var2).ensureCompanionExists(packet.character));
+        } else {
+            LOGGER.warn("Received spawn request with null character from player {}", var2.getGameProfile().getName());
         }
     }
 }

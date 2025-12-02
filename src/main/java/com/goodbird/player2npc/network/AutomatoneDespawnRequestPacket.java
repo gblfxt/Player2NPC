@@ -15,12 +15,16 @@ import net.minecraft.network.packet.Packet;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayNetworkHandler;
 import net.minecraft.server.network.ServerPlayerEntity;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 public class AutomatoneDespawnRequestPacket implements FabricPacket {
 
-    public static final PacketType<AutomatonSpawnPacket> TYPE = PacketType.create(
-            Player2NPC.DESPAWN_REQUEST_PACKET_ID,
-            AutomatonSpawnPacket::new
+    private static final Logger LOGGER = LogManager.getLogger();
+
+    public static final PacketType<AutomatoneDespawnRequestPacket> TYPE = PacketType.create(
+        Player2NPC.DESPAWN_REQUEST_PACKET_ID,
+        AutomatoneDespawnRequestPacket::new
     );
 
     private final Character character;
@@ -51,6 +55,10 @@ public class AutomatoneDespawnRequestPacket implements FabricPacket {
 
     public static void handle(MinecraftServer var1, ServerPlayerEntity var2, ServerPlayNetworkHandler var3, PacketByteBuf var4, PacketSender var5) {
         AutomatoneDespawnRequestPacket packet = new AutomatoneDespawnRequestPacket(var4);
-        var1.execute(() -> CompanionManager.KEY.get(var2).dismissCompanion(packet.character.name()));
+        if (packet.character != null) {
+            var1.execute(() -> CompanionManager.KEY.get(var2).dismissCompanion(packet.character.name()));
+        } else {
+            LOGGER.warn("Received despawn request with null character from player {}", var2.getGameProfile().getName());
+        }
     }
 }

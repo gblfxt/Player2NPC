@@ -18,6 +18,7 @@ import net.minecraft.nbt.NbtList;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.network.listener.ClientPlayPacketListener;
 import net.minecraft.network.packet.Packet;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 
 import java.util.UUID;
@@ -54,7 +55,10 @@ public class AutomatonSpawnPacket implements FabricPacket {
         this.id = buf.readVarInt();
         this.uuid = buf.readUuid();
         this.pos = new Vec3d(buf.readDouble(), buf.readDouble(), buf.readDouble());
-        this.velocity = new Vec3d(buf.readShort(), buf.readShort(), buf.readShort());
+        double velX = buf.readShort() / 8000.0;
+        double velY = buf.readShort() / 8000.0;
+        double velZ = buf.readShort() / 8000.0;
+        this.velocity = new Vec3d(velX, velY, velZ);
         this.pitch = (buf.readByte() * 360) / 256.0F;
         this.yaw = (buf.readByte() * 360) / 256.0F;
 
@@ -76,9 +80,9 @@ public class AutomatonSpawnPacket implements FabricPacket {
         buf.writeDouble(this.pos.x);
         buf.writeDouble(this.pos.y);
         buf.writeDouble(this.pos.z);
-        buf.writeShort((int) (Math.min(3.9, this.velocity.x) * 8000.0));
-        buf.writeShort((int) (Math.min(3.9, this.velocity.y) * 8000.0));
-        buf.writeShort((int) (Math.min(3.9, this.velocity.z) * 8000.0));
+        buf.writeShort((int) (MathHelper.clamp(this.velocity.x, -3.9, 3.9) * 8000.0));
+        buf.writeShort((int) (MathHelper.clamp(this.velocity.y, -3.9, 3.9) * 8000.0));
+        buf.writeShort((int) (MathHelper.clamp(this.velocity.z, -3.9, 3.9) * 8000.0));
         buf.writeByte((byte) ((int) (this.pitch * 256.0F / 360.0F)));
         buf.writeByte((byte) ((int) (this.yaw * 256.0F / 360.0F)));
 

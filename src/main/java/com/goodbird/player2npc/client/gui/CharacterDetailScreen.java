@@ -1,6 +1,7 @@
 package com.goodbird.player2npc.client.gui;
 
 import adris.altoclef.player2api.Character;
+import com.goodbird.player2npc.Player2NPC;
 import com.goodbird.player2npc.client.util.SkinManager;
 import com.goodbird.player2npc.network.AutomatoneDespawnRequestPacket;
 import com.goodbird.player2npc.network.AutomatoneSpawnRequestPacket;
@@ -30,17 +31,21 @@ public class CharacterDetailScreen extends Screen {
         super.init();
 
         this.addDrawableChild(ButtonWidget.builder(Text.of("Summon"), button -> {
-            System.out.println("Summoning: " + character.name());
-            client.getNetworkHandler().sendPacket(AutomatoneSpawnRequestPacket.create(character));
-            if (this.client != null) {
-                this.client.setScreen(null);
+            if (this.client != null && this.client.getNetworkHandler() != null) {
+                Player2NPC.LOGGER.info("Summoning companion {}", character.name());
+                this.client.getNetworkHandler().sendPacket(AutomatoneSpawnRequestPacket.create(character));
+            } else {
+                Player2NPC.LOGGER.warn("Unable to summon companion {} because network handler is unavailable",
+                        character.name());
             }
         }).positionAndSize(this.width / 2 - 100, this.height - 100, 98, 20).build());
         this.addDrawableChild(ButtonWidget.builder(Text.of("Despawn"), button -> {
-            System.out.println("Summoning: " + character.name());
-            client.getNetworkHandler().sendPacket(AutomatoneDespawnRequestPacket.create(character));
-            if (this.client != null) {
-                this.client.setScreen(null);
+            if (this.client != null && this.client.getNetworkHandler() != null) {
+                Player2NPC.LOGGER.info("Despawning companion {}", character.name());
+                this.client.getNetworkHandler().sendPacket(AutomatoneDespawnRequestPacket.create(character));
+            } else {
+                Player2NPC.LOGGER.warn("Unable to despawn companion {} because network handler is unavailable",
+                        character.name());
             }
         }).positionAndSize(this.width / 2 - 100, this.height - 130, 98, 20).build());
 

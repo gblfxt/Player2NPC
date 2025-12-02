@@ -2,6 +2,7 @@ package com.goodbird.player2npc.client.gui;
 
 import adris.altoclef.player2api.Character;
 import adris.altoclef.player2api.utils.CharacterUtils;
+import com.goodbird.player2npc.Player2NPC;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screen.Screen;
@@ -13,6 +14,7 @@ public class CharacterSelectionScreen extends Screen {
 
     private Character[] characters = null;
     private boolean isLoading = true;
+    private Text statusMessage = null;
 
     public CharacterSelectionScreen() {
         super(Text.of("Select a Character"));
@@ -23,14 +25,30 @@ public class CharacterSelectionScreen extends Screen {
         super.init();
         this.clearChildren();
         isLoading = true;
+        statusMessage = null;
 
-        CompletableFuture.supplyAsync(()->CharacterUtils.requestCharacters(MinecraftClient.getInstance().player, "player2-ai-npc-minecraft"))
-                .thenAcceptAsync(result -> {
-                    this.characters = result;
+        MinecraftClient minecraftClient = MinecraftClient.getInstance();
+
+        CompletableFuture.supplyAsync(
+                        () -> CharacterUtils.requestCharacters(minecraftClient.player, "player2-ai-npc-minecraft"))
+                .whenCompleteAsync((result, throwable) -> {
                     this.isLoading = false;
 
-                    this.client.execute(this::createCharacterCards);
-                }, this.client);
+                    if (throwable != null) {
+                        Player2NPC.LOGGER.error("Failed to load Player2 characters", throwable);
+                        this.characters = new Character[0];
+                        this.statusMessage = Text.of("Failed to load characters");
+                        return;
+                    }
+
+                    this.characters = (result != null) ? result : new Character[0];
+                    this.statusMessage = (this.characters.length == 0)
+                            ? Text.of("No characters available")
+                            : null;
+
+                    this.clearChildren();
+                    this.createCharacterCards();
+                }, minecraftClient);
     }
 
     private void createCharacterCards() {
@@ -73,6 +91,9 @@ public class CharacterSelectionScreen extends Screen {
 
         if (isLoading) {
             graphics.drawCenteredShadowedText(this.textRenderer, "Loading...", this.width / 2, this.height / 2, 0xAAAAAA);
+        } else if (statusMessage != null) {
+            graphics.drawCenteredShadowedText(this.textRenderer, statusMessage.getString(), this.width / 2,
+                    this.height / 2, 0xAAAAAA);
         }
 
         super.render(graphics, mouseX, mouseY, delta);

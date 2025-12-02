@@ -1,5 +1,6 @@
 package com.goodbird.player2npc.client.render;
 
+import com.goodbird.player2npc.Player2NPC;
 import com.goodbird.player2npc.client.util.ImageDownloadAlt;
 import com.goodbird.player2npc.client.util.ResourceDownloader;
 import com.goodbird.player2npc.companion.AutomatoneEntity;
@@ -52,7 +53,9 @@ public class RenderAutomaton extends LivingEntityRenderer<AutomatoneEntity, Play
         try {
             this.setModelPose(automatoneEntity);
             super.render(automatoneEntity, f, g, matrixStack, vertexConsumerProvider, i);
-        }catch (Exception ignored){}
+        } catch (Exception ex) {
+            Player2NPC.LOGGER.error("Failed to render automatone {}", automatoneEntity.getUuid(), ex);
+        }
     }
 
     public Vec3d getPositionOffset(AutomatoneEntity automatoneEntity, float f) {
