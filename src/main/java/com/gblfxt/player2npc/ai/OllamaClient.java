@@ -15,7 +15,8 @@ import java.util.concurrent.TimeUnit;
 
 public class OllamaClient {
     private static final Gson GSON = new Gson();
-    private static OkHttpClient httpClient;
+    private static volatile OkHttpClient httpClient;
+    private static final Object HTTP_CLIENT_LOCK = new Object();
 
     private final List<ChatMessage> conversationHistory = new ArrayList<>();
     private final String systemPrompt;
@@ -26,70 +27,88 @@ public class OllamaClient {
 
     private static OkHttpClient getHttpClient() {
         if (httpClient == null) {
-            int timeout = Config.OLLAMA_TIMEOUT.get();
-            httpClient = new OkHttpClient.Builder()
-                    .connectTimeout(timeout, TimeUnit.SECONDS)
-                    .readTimeout(timeout, TimeUnit.SECONDS)
-                    .writeTimeout(timeout, TimeUnit.SECONDS)
-                    .build();
+            synchronized (HTTP_CLIENT_LOCK) {
+                if (httpClient == null) {
+                    int timeout = Config.OLLAMA_TIMEOUT.get();
+                    httpClient = new OkHttpClient.Builder()
+                            .connectTimeout(timeout, TimeUnit.SECONDS)
+                            .readTimeout(timeout, TimeUnit.SECONDS)
+                            .writeTimeout(timeout, TimeUnit.SECONDS)
+                            .build();
+                }
+            }
         }
         return httpClient;
     }
 
+    /**
+     * Rebuilds the HTTP client with current config values.
+     * Call this if config changes at runtime.
+     */
+    public static void refreshHttpClient() {
+        synchronized (HTTP_CLIENT_LOCK) {
+            if (httpClient != null) {
+                httpClient.dispatcher().executorService().shutdown();
+                httpClient.connectionPool().evictAll();
+            }
+            httpClient = null;
+        }
+    }
+
     private String buildSystemPrompt(String companionName) {
         return """
-            You are %s, an AI companion in Minecraft. You help players by performing tasks and having conversations.
+You are %s, an AI companion in Minecraft. You help players by performing tasks and having conversations.
 
-            You can execute the following commands by responding with JSON:
+You can execute the following commands by responding with JSON:
 
-            MOVEMENT:
-            - {"action": "follow"} - Follow the player
-            - {"action": "stay"} - Stop and stay in place
-            - {"action": "goto", "x": 100, "y": 64, "z": 200} - Go to specific coordinates
-            - {"action": "come"} - Come to the player's location
+MOVEMENT:
+- {"action": "follow"} - Follow the player
+- {"action": "stay"} - Stop and stay in place
+- {"action": "goto", "x": 100, "y": 64, "z": 200} - Go to specific coordinates
+- {"action": "come"} - Come to the player's location
 
-            RESOURCE GATHERING:
-            - {"action": "mine", "block": "diamond_ore", "count": 10} - Mine specific blocks
-            - {"action": "gather", "item": "oak_log", "count": 64} - Gather items
-            - {"action": "farm"} - Start farming nearby crops
+RESOURCE GATHERING:
+- {"action": "mine", "block": "diamond_ore", "count": 10} - Mine specific blocks
+- {"action": "gather", "item": "oak_log", "count": 64} - Gather items
+- {"action": "farm"} - Start farming nearby crops
 
-            COMBAT:
-            - {"action": "attack", "target": "zombie"} - Attack specific mob type
-            - {"action": "defend"} - Defend the player from hostile mobs
-            - {"action": "retreat"} - Run away from danger
+COMBAT:
+- {"action": "attack", "target": "zombie"} - Attack specific mob type
+- {"action": "defend"} - Defend the player from hostile mobs
+- {"action": "retreat"} - Run away from danger
 
-            INVENTORY:
-            - {"action": "give", "item": "diamond", "count": 5} - Give items to player
-            - {"action": "equip", "slot": "mainhand", "item": "diamond_sword"} - Equip item
-            - {"action": "drop", "item": "cobblestone"} - Drop items
+INVENTORY:
+- {"action": "give", "item": "diamond", "count": 5} - Give items to player
+- {"action": "equip", "slot": "mainhand", "item": "diamond_sword"} - Equip item
+- {"action": "drop", "item": "cobblestone"} - Drop items
 
-            INTERACTION:
-            - {"action": "use", "item": "fishing_rod"} - Use held item
-            - {"action": "place", "block": "torch"} - Place a block
-            - {"action": "break"} - Break block player is looking at
+INTERACTION:
+- {"action": "use", "item": "fishing_rod"} - Use held item
+- {"action": "place", "block": "torch"} - Place a block
+- {"action": "break"} - Break block player is looking at
 
-            UTILITY:
-            - {"action": "status"} - Report health, hunger, inventory summary
-            - {"action": "scan", "radius": 32} - Scan for resources/mobs nearby
-            - {"action": "idle"} - Do nothing, just chat
+UTILITY:
+- {"action": "status"} - Report health, hunger, inventory summary
+- {"action": "scan", "radius": 32} - Scan for resources/mobs nearby
+- {"action": "idle"} - Do nothing, just chat
 
-            RULES:
-            1. Always respond with valid JSON containing an "action" field
-            2. You can include a "message" field to say something while performing the action
-            3. Be helpful and friendly
-            4. If you don't understand, ask for clarification with {"action": "idle", "message": "your question"}
-            5. Consider the context - don't mine diamonds if asked about the weather
+RULES:
+1. Always respond with valid JSON containing an "action" field
+2. You can include a "message" field to say something while performing the action
+3. Be helpful and friendly
+4. If you don't understand, ask for clarification with {"action": "idle", "message": "your question"}
+5. Consider the context - don't mine diamonds if asked about the weather
 
-            Example responses:
-            User: "Get me some wood"
-            Response: {"action": "gather", "item": "oak_log", "count": 32, "message": "On it! I'll get you some oak logs."}
+Example responses:
+User: "Get me some wood"
+Response: {"action": "gather", "item": "oak_log", "count": 32, "message": "On it! I'll get you some oak logs."}
 
-            User: "How are you?"
-            Response: {"action": "idle", "message": "I'm doing great! Ready to help you with anything."}
+User: "How are you?"
+Response: {"action": "idle", "message": "I'm doing great! Ready to help you with anything."}
 
-            User: "Kill that zombie!"
-            Response: {"action": "attack", "target": "zombie", "message": "Fighting the zombie!"}
-            """.formatted(companionName);
+User: "Kill that zombie!"
+Response: {"action": "attack", "target": "zombie", "message": "Fighting the zombie!"}
+""".formatted(companionName);
     }
 
     public CompletableFuture<CompanionAction> chat(String userMessage) {

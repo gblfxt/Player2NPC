@@ -49,9 +49,6 @@ public class CompanionEntity extends PathfinderMob implements Container {
     // AI Controller
     private CompanionAI aiController;
 
-    // State
-    private int lastAttackTick = 0;
-
     public CompanionEntity(EntityType<? extends CompanionEntity> type, Level level) {
         super(type, level);
         // Step height is set via entity type attributes in 1.21.1
@@ -88,8 +85,6 @@ public class CompanionEntity extends PathfinderMob implements Container {
 
             // Item pickup
             pickupItems();
-
-            lastAttackTick++;
         }
     }
 
@@ -144,7 +139,8 @@ public class CompanionEntity extends PathfinderMob implements Container {
 
     @Override
     public boolean hurt(DamageSource source, float amount) {
-        if (!Config.COMPANIONS_TAKE_DAMAGE.get() && source.getEntity() instanceof Player) {
+        // If damage is disabled, companions are invulnerable
+        if (!Config.COMPANIONS_TAKE_DAMAGE.get()) {
             return false;
         }
         return super.hurt(source, amount);

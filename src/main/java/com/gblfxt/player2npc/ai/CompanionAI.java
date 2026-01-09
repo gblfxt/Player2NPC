@@ -5,14 +5,13 @@ import com.gblfxt.player2npc.Player2NPC;
 import com.gblfxt.player2npc.entity.CompanionEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
-import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.Block;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -270,19 +269,47 @@ public class CompanionAI {
 
     private void startAttacking(String targetType) {
         currentState = AIState.ATTACKING;
-        targetEntity = findAttackTarget();
+        targetEntity = findAttackTarget(targetType);
     }
 
-    private Entity findAttackTarget() {
+    private Entity findAttackTarget(String targetType) {
+        // Try to find entity type by name
+        EntityType<?> specificType = null;
+        if (targetType != null && !targetType.isEmpty() && !targetType.equalsIgnoreCase("hostile")) {
+            // Try with minecraft namespace first, then without
+            ResourceLocation typeId = targetType.contains(":")
+                    ? ResourceLocation.tryParse(targetType)
+                    : ResourceLocation.withDefaultNamespace(targetType);
+            if (typeId != null && BuiltInRegistries.ENTITY_TYPE.containsKey(typeId)) {
+                specificType = BuiltInRegistries.ENTITY_TYPE.get(typeId);
+            }
+        }
+
+        final EntityType<?> searchType = specificType;
+
         List<LivingEntity> entities = companion.level().getEntitiesOfClass(
                 LivingEntity.class,
                 companion.getBoundingBox().inflate(16),
-                e -> e.isAlive() && e != companion && e != companion.getOwner() && e instanceof Monster
+                e -> {
+                    if (!e.isAlive() || e == companion || e == companion.getOwner()) {
+                        return false;
+                    }
+                    // If specific type requested, match it
+                    if (searchType != null) {
+                        return e.getType() == searchType;
+                    }
+                    // Otherwise, target any monster
+                    return e instanceof Monster;
+                }
         );
 
         return entities.stream()
                 .min(Comparator.comparingDouble(e -> companion.distanceTo(e)))
                 .orElse(null);
+    }
+
+    private Entity findAttackTarget() {
+        return findAttackTarget("hostile");
     }
 
     private void startDefending() {

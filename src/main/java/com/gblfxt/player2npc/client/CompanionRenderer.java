@@ -1,6 +1,5 @@
 package com.gblfxt.player2npc.client;
 
-import com.gblfxt.player2npc.Player2NPC;
 import com.gblfxt.player2npc.entity.CompanionEntity;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.model.HumanoidArmorModel;
@@ -14,10 +13,7 @@ import net.minecraft.resources.ResourceLocation;
 
 public class CompanionRenderer extends HumanoidMobRenderer<CompanionEntity, CompanionModel> {
 
-    private static final ResourceLocation DEFAULT_TEXTURE =
-            ResourceLocation.fromNamespaceAndPath(Player2NPC.MOD_ID, "textures/entity/companion.png");
-
-    // Fallback to Steve texture if custom texture not available
+    // Fallback to Steve texture until dynamic skin loading is implemented
     private static final ResourceLocation STEVE_TEXTURE =
             ResourceLocation.withDefaultNamespace("textures/entity/player/wide/steve.png");
 

@@ -8,7 +8,6 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.neoforged.bus.api.IEventBus;
-import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
@@ -79,10 +78,8 @@ public class Player2NPC {
         LOGGER.info("Player2NPC commands registered");
     }
 
-    @SubscribeEvent
-    public void onServerTick(ServerTickEvent.Post event) {
-        // Tick AI controllers for all companions
-        // This will be implemented in the AI controller
+    private void onServerTick(ServerTickEvent.Post event) {
+        // AI controllers are ticked by the entity itself in CompanionEntity.tick()
     }
 
     public static ResourceLocation id(String path) {

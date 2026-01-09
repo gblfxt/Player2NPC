@@ -63,7 +63,8 @@ public class ChatHandler {
         );
 
         if (companions.isEmpty()) {
-            // No companions found
+            // No companions found - don't cancel event, let message through as normal chat
+            // User may have typed @ for other reasons
             return;
         }
 

@@ -175,15 +175,14 @@ public class CompanionCommand {
         CommandSourceStack source = ctx.getSource();
 
         String help = """
-                Player2NPC Commands:
-                 /companion summon <name> - Summon a new AI companion
-                 /companion dismiss <name> - Dismiss a specific companion
-                 /companion dismiss - Dismiss all companions
-                 /companion list - List your companions
+Player2NPC Commands:
+  /companion summon <name> - Summon a new AI companion
+  /companion dismiss <name> - Dismiss a specific companion
+  /companion dismiss - Dismiss all companions
+  /companion list - List your companions
 
-                Chat with companions using: @<name> <message>
-                Example: @Alex follow me
-                """;
+Chat with companions using: @<name> <message>
+Example: @Alex follow me""";
 
         source.sendSuccess(() -> Component.literal(help), false);
         return 1;
