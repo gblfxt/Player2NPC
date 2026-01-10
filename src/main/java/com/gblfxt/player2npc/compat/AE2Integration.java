@@ -392,20 +392,20 @@ public class AE2Integration {
 
             Player2NPC.LOGGER.info("AE2: Got key counter: {}", keyCounter.getClass().getSimpleName());
 
-            // Iterate through available items
+            // Get iterator and cast to java.util.Iterator to avoid Guava module access issues
             var iteratorMethod = keyCounter.getClass().getMethod("iterator");
-            var iterator = iteratorMethod.invoke(keyCounter);
+            Object iteratorObj = iteratorMethod.invoke(keyCounter);
+
+            // Cast to Iterator interface to avoid module access issues with Guava's internal iterator
+            @SuppressWarnings("unchecked")
+            java.util.Iterator<Object> iterator = (java.util.Iterator<Object>) iteratorObj;
 
             int extractedCount = 0;
             int totalItemsScanned = 0;
             int matchingItems = 0;
 
-            while (extractedCount < maxCount) {
-                var hasNextMethod = iterator.getClass().getMethod("hasNext");
-                if (!(boolean) hasNextMethod.invoke(iterator)) break;
-
-                var nextMethod = iterator.getClass().getMethod("next");
-                Object entry = nextMethod.invoke(iterator);
+            while (extractedCount < maxCount && iterator.hasNext()) {
+                Object entry = iterator.next();
                 totalItemsScanned++;
 
                 // Get the key and amount
@@ -492,14 +492,14 @@ public class AE2Integration {
             if (keyCounter == null) return items;
 
             var iteratorMethod = keyCounter.getClass().getMethod("iterator");
-            var iterator = iteratorMethod.invoke(keyCounter);
+            Object iteratorObj = iteratorMethod.invoke(keyCounter);
 
-            while (true) {
-                var hasNextMethod = iterator.getClass().getMethod("hasNext");
-                if (!(boolean) hasNextMethod.invoke(iterator)) break;
+            // Cast to Iterator interface to avoid module access issues with Guava's internal iterator
+            @SuppressWarnings("unchecked")
+            java.util.Iterator<Object> iterator = (java.util.Iterator<Object>) iteratorObj;
 
-                var nextMethod = iterator.getClass().getMethod("next");
-                Object entry = nextMethod.invoke(iterator);
+            while (iterator.hasNext()) {
+                Object entry = iterator.next();
 
                 var getKeyMethod = entry.getClass().getMethod("getKey");
                 Object key = getKeyMethod.invoke(entry);
