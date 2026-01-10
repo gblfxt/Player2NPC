@@ -1,5 +1,6 @@
 package com.gblfxt.player2npc.entity;
 
+import com.gblfxt.player2npc.ChunkLoadingManager;
 import com.gblfxt.player2npc.Config;
 import com.gblfxt.player2npc.Player2NPC;
 import com.gblfxt.player2npc.ai.CompanionAI;
@@ -85,7 +86,22 @@ public class CompanionEntity extends PathfinderMob implements Container {
 
             // Item pickup
             pickupItems();
+
+            // Start/update chunk loading
+            if (this.tickCount == 1) {
+                ChunkLoadingManager.startLoadingChunks(this);
+            } else if (this.tickCount % 100 == 0) {
+                ChunkLoadingManager.updateChunkLoading(this);
+            }
         }
+    }
+
+    @Override
+    public void remove(RemovalReason reason) {
+        if (!this.level().isClientSide) {
+            ChunkLoadingManager.stopLoadingChunks(this);
+        }
+        super.remove(reason);
     }
 
     private void pickupItems() {

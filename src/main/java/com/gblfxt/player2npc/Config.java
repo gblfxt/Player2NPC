@@ -18,6 +18,7 @@ public class Config {
     public static final ModConfigSpec.ConfigValue<Boolean> COMPANIONS_NEED_FOOD;
     public static final ModConfigSpec.ConfigValue<Double> COMPANION_FOLLOW_DISTANCE;
     public static final ModConfigSpec.ConfigValue<Integer> ITEM_PICKUP_RADIUS;
+    public static final ModConfigSpec.ConfigValue<Boolean> COMPANIONS_LOAD_CHUNKS;
 
     // Chat settings
     public static final ModConfigSpec.ConfigValue<String> CHAT_PREFIX;
@@ -65,6 +66,10 @@ public class Config {
         ITEM_PICKUP_RADIUS = BUILDER
                 .comment("Radius in blocks for item pickup")
                 .defineInRange("itemPickupRadius", 3, 0, 10);
+
+        COMPANIONS_LOAD_CHUNKS = BUILDER
+                .comment("Whether companions force-load their chunk (allows them to work when players are offline)")
+                .define("loadChunks", true);
 
         BUILDER.pop();
 
