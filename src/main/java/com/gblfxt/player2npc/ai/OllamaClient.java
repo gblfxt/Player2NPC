@@ -130,6 +130,8 @@ INVENTORY:
 ME NETWORK:
 - {"action": "getgear", "material": "iron"} - Get iron set from ME (craft if needed)
 - {"action": "getgear", "material": "diamond"} - Get diamond set from ME
+- {"action": "deposit"} - Deposit all items into ME network or nearby chest (keeps gear)
+- {"action": "deposit", "keepGear": false} - Deposit everything including weapons/armor
 
 UTILITY:
 - {"action": "status"} - Report health/hunger/inventory
@@ -387,6 +389,17 @@ TELEPORT:
             lower.contains("from terminal")) {
             CompanionAction action = new CompanionAction("getgear", text);
             action.setParameter("material", "iron");  // Default to iron
+            return action;
+        }
+
+        // Deposit items
+        if (lower.contains("deposit") || lower.contains("store") || lower.contains("stash") ||
+            lower.contains("put away") || lower.contains("put items") || lower.contains("empty inventory")) {
+            CompanionAction action = new CompanionAction("deposit", text);
+            // Check if they want to deposit everything including gear
+            if (lower.contains("everything") || lower.contains("all items") || lower.contains("including gear")) {
+                action.setParameter("keepGear", "false");
+            }
             return action;
         }
 

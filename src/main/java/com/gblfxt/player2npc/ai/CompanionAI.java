@@ -204,6 +204,10 @@ public class CompanionAI {
                 String material = action.getString("material", "iron");
                 getGearFromME(material);
             }
+            case "deposit", "store", "stash", "putaway" -> {
+                boolean keepGear = action.getBoolean("keepGear", true);
+                depositItems(keepGear);
+            }
             default -> {
                 Player2NPC.LOGGER.warn("[{}] Unknown action: {}", companion.getCompanionName(), action.getAction());
                 currentState = AIState.IDLE;
@@ -251,6 +255,15 @@ public class CompanionAI {
                 GearRequest req = pendingGearRequest;
                 pendingGearRequest = null;
                 retrieveOrCraftGear(serverLevel, req.terminal(), req.items(), req.material());
+                targetPos = null;
+                return;
+            }
+
+            // Check for pending deposit request
+            if (pendingDepositRequest != null && companion.level() instanceof ServerLevel serverLevel) {
+                DepositRequest req = pendingDepositRequest;
+                pendingDepositRequest = null;
+                executeDeposit(serverLevel, req.pos(), req.isME(), req.keepGear());
                 targetPos = null;
                 return;
             }
@@ -925,6 +938,288 @@ public class CompanionAI {
                 companion.setItem(i, ItemStack.EMPTY);
             }
         }
+    }
+
+    private void depositItems(boolean keepGear) {
+        if (!(companion.level() instanceof ServerLevel serverLevel)) {
+            sendMessage("Something's wrong with the world...");
+            return;
+        }
+
+        // Count items to deposit
+        int itemCount = 0;
+        for (int i = 0; i < companion.getContainerSize(); i++) {
+            if (!companion.getItem(i).isEmpty()) {
+                itemCount++;
+            }
+        }
+
+        if (itemCount == 0) {
+            sendMessage("My inventory is empty, nothing to deposit!");
+            return;
+        }
+
+        // First try ME network
+        if (AE2Integration.isAE2Loaded()) {
+            List<BlockPos> meTerminals = AE2Integration.findMEAccessPoints(
+                    serverLevel, companion.blockPosition(), 32);
+
+            if (!meTerminals.isEmpty()) {
+                BlockPos terminal = meTerminals.get(0);
+                sendMessage("Found ME terminal! Going to deposit items...");
+
+                // Navigate to terminal
+                currentState = AIState.GOING_TO;
+                targetPos = terminal;
+                pendingDepositRequest = new DepositRequest(terminal, true, keepGear);
+                companion.getNavigation().moveTo(terminal.getX() + 0.5, terminal.getY(), terminal.getZ() + 0.5, 1.0);
+
+                double distance = companion.position().distanceTo(Vec3.atCenterOf(terminal));
+                if (distance < 5.0) {
+                    executeDeposit(serverLevel, terminal, true, keepGear);
+                }
+                return;
+            }
+        }
+
+        // Try regular chests
+        BlockPos chest = findNearbyChest(serverLevel, 16);
+        if (chest != null) {
+            sendMessage("Found a chest! Going to deposit items...");
+            currentState = AIState.GOING_TO;
+            targetPos = chest;
+            pendingDepositRequest = new DepositRequest(chest, false, keepGear);
+            companion.getNavigation().moveTo(chest.getX() + 0.5, chest.getY(), chest.getZ() + 0.5, 1.0);
+
+            double distance = companion.position().distanceTo(Vec3.atCenterOf(chest));
+            if (distance < 3.0) {
+                executeDeposit(serverLevel, chest, false, keepGear);
+            }
+            return;
+        }
+
+        sendMessage("I can't find any storage nearby!");
+    }
+
+    private DepositRequest pendingDepositRequest = null;
+
+    private record DepositRequest(BlockPos pos, boolean isME, boolean keepGear) {}
+
+    private BlockPos findNearbyChest(ServerLevel level, int radius) {
+        BlockPos center = companion.blockPosition();
+        for (int x = -radius; x <= radius; x++) {
+            for (int y = -3; y <= 3; y++) {
+                for (int z = -radius; z <= radius; z++) {
+                    BlockPos pos = center.offset(x, y, z);
+                    if (level.getBlockEntity(pos) instanceof net.minecraft.world.level.block.entity.BaseContainerBlockEntity) {
+                        return pos;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private void executeDeposit(ServerLevel level, BlockPos storagePos, boolean isME, boolean keepGear) {
+        int deposited = 0;
+
+        if (isME) {
+            // Deposit into ME network
+            deposited = depositToME(level, storagePos, keepGear);
+        } else {
+            // Deposit into chest
+            deposited = depositToChest(level, storagePos, keepGear);
+        }
+
+        if (deposited > 0) {
+            sendMessage("Deposited " + deposited + " item stacks!" + (keepGear ? " (Kept my gear)" : ""));
+        } else {
+            sendMessage("Couldn't deposit any items - storage might be full!");
+        }
+
+        pendingDepositRequest = null;
+        currentState = AIState.IDLE;
+    }
+
+    private int depositToME(ServerLevel level, BlockPos terminal, boolean keepGear) {
+        int deposited = 0;
+
+        try {
+            // Get ME network access
+            net.minecraft.world.level.block.entity.BlockEntity be = level.getBlockEntity(terminal);
+            if (be == null) return 0;
+
+            // Use reflection to insert items into ME network
+            Object grid = getGridFromBlockEntity(be);
+            if (grid == null) return 0;
+
+            Object storageService = getStorageService(grid);
+            if (storageService == null) return 0;
+
+            Object inventory = getInventory(storageService);
+            if (inventory == null) return 0;
+
+            // Deposit each item from companion's inventory
+            for (int i = 0; i < companion.getContainerSize(); i++) {
+                ItemStack stack = companion.getItem(i);
+                if (stack.isEmpty()) continue;
+
+                // Skip weapons/armor if keepGear is true
+                if (keepGear) {
+                    Item item = stack.getItem();
+                    if (item instanceof SwordItem || item instanceof AxeItem ||
+                        item instanceof ArmorItem) {
+                        continue;
+                    }
+                }
+
+                // Insert into ME network
+                if (insertIntoME(inventory, stack)) {
+                    companion.setItem(i, ItemStack.EMPTY);
+                    deposited++;
+                }
+            }
+        } catch (Exception e) {
+            Player2NPC.LOGGER.warn("Error depositing to ME: {}", e.getMessage());
+        }
+
+        return deposited;
+    }
+
+    private Object getGridFromBlockEntity(net.minecraft.world.level.block.entity.BlockEntity be) {
+        try {
+            for (var method : be.getClass().getMethods()) {
+                if (method.getName().equals("getGridNode") || method.getName().equals("getMainNode")) {
+                    Object node = null;
+                    if (method.getParameterCount() == 1) {
+                        for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+                            try {
+                                node = method.invoke(be, dir);
+                                if (node != null) break;
+                            } catch (Exception ignored) {}
+                        }
+                    } else if (method.getParameterCount() == 0) {
+                        node = method.invoke(be);
+                    }
+                    if (node != null) {
+                        for (var nodeMethod : node.getClass().getMethods()) {
+                            if (nodeMethod.getName().equals("getGrid") && nodeMethod.getParameterCount() == 0) {
+                                return nodeMethod.invoke(node);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Player2NPC.LOGGER.debug("Could not get grid: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private Object getStorageService(Object grid) {
+        try {
+            for (var method : grid.getClass().getMethods()) {
+                if (method.getName().equals("getStorageService")) {
+                    return method.invoke(grid);
+                }
+            }
+        } catch (Exception e) {
+            Player2NPC.LOGGER.debug("Could not get storage service: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private Object getInventory(Object storageService) {
+        try {
+            for (var method : storageService.getClass().getMethods()) {
+                if (method.getName().equals("getInventory") && method.getParameterCount() == 0) {
+                    return method.invoke(storageService);
+                }
+            }
+        } catch (Exception e) {
+            Player2NPC.LOGGER.debug("Could not get inventory: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private boolean insertIntoME(Object inventory, ItemStack stack) {
+        try {
+            // Create AEItemKey
+            Class<?> aeItemKeyClass = Class.forName("appeng.api.stacks.AEItemKey");
+            var ofMethod = aeItemKeyClass.getMethod("of", ItemStack.class);
+            Object aeItemKey = ofMethod.invoke(null, stack);
+
+            if (aeItemKey == null) return false;
+
+            // Get Actionable.MODULATE
+            Class<?> actionableClass = Class.forName("appeng.api.config.Actionable");
+            Object modulate = actionableClass.getField("MODULATE").get(null);
+
+            // Create action source
+            Object actionSource = Class.forName("appeng.me.helpers.BaseActionSource")
+                    .getDeclaredConstructor().newInstance();
+
+            // Insert: MEStorage.insert(AEKey, long, Actionable, IActionSource)
+            var insertMethod = inventory.getClass().getMethod("insert",
+                    Class.forName("appeng.api.stacks.AEKey"),
+                    long.class,
+                    actionableClass,
+                    Class.forName("appeng.api.networking.security.IActionSource"));
+
+            long inserted = (long) insertMethod.invoke(inventory, aeItemKey, (long) stack.getCount(), modulate, actionSource);
+            return inserted > 0;
+        } catch (Exception e) {
+            Player2NPC.LOGGER.trace("Could not insert into ME: {}", e.getMessage());
+        }
+        return false;
+    }
+
+    private int depositToChest(ServerLevel level, BlockPos chestPos, boolean keepGear) {
+        int deposited = 0;
+
+        net.minecraft.world.level.block.entity.BlockEntity be = level.getBlockEntity(chestPos);
+        if (!(be instanceof net.minecraft.world.level.block.entity.BaseContainerBlockEntity container)) {
+            return 0;
+        }
+
+        for (int i = 0; i < companion.getContainerSize(); i++) {
+            ItemStack stack = companion.getItem(i);
+            if (stack.isEmpty()) continue;
+
+            // Skip weapons/armor if keepGear is true
+            if (keepGear) {
+                Item item = stack.getItem();
+                if (item instanceof SwordItem || item instanceof AxeItem ||
+                    item instanceof ArmorItem) {
+                    continue;
+                }
+            }
+
+            // Try to insert into chest
+            for (int j = 0; j < container.getContainerSize(); j++) {
+                ItemStack chestStack = container.getItem(j);
+                if (chestStack.isEmpty()) {
+                    container.setItem(j, stack.copy());
+                    companion.setItem(i, ItemStack.EMPTY);
+                    deposited++;
+                    break;
+                } else if (ItemStack.isSameItemSameComponents(chestStack, stack) &&
+                           chestStack.getCount() < chestStack.getMaxStackSize()) {
+                    int space = chestStack.getMaxStackSize() - chestStack.getCount();
+                    int toTransfer = Math.min(space, stack.getCount());
+                    chestStack.grow(toTransfer);
+                    stack.shrink(toTransfer);
+                    if (stack.isEmpty()) {
+                        companion.setItem(i, ItemStack.EMPTY);
+                        deposited++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        container.setChanged();
+        return deposited;
     }
 
     private void requestTeleport(String targetPlayer) {
