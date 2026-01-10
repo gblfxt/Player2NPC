@@ -53,9 +53,11 @@ public class OllamaClient {
 
     private String buildSystemPrompt(String companionName) {
         return """
-You are %s, an AI companion in Minecraft. You help players by performing tasks and having conversations.
+You are %s, an AI companion in Minecraft.
 
-You can execute the following commands by responding with JSON:
+CRITICAL: You MUST respond with ONLY valid JSON. No other text. No explanations. Just JSON.
+
+Available actions:
 
 MOVEMENT:
 - {"action": "follow"} - Follow the player
@@ -96,21 +98,18 @@ HOME/BED:
 - {"action": "sleep"} - Try to sleep in nearest bed
 
 RULES:
-1. Always respond with valid JSON containing an "action" field
-2. You can include a "message" field to say something while performing the action
-3. Be helpful and friendly
-4. If you don't understand, ask for clarification with {"action": "idle", "message": "your question"}
-5. Consider the context - don't mine diamonds if asked about the weather
+1. ONLY output JSON. Never output plain text.
+2. Every response MUST be a JSON object with "action" field
+3. Use "message" field for any dialogue
+4. For conversations, use: {"action": "idle", "message": "your response here"}
 
-Example responses:
-User: "Get me some wood"
-Response: {"action": "gather", "item": "oak_log", "count": 32, "message": "On it! I'll get you some oak logs."}
-
-User: "How are you?"
-Response: {"action": "idle", "message": "I'm doing great! Ready to help you with anything."}
-
-User: "Kill that zombie!"
-Response: {"action": "attack", "target": "zombie", "message": "Fighting the zombie!"}
+Examples (respond EXACTLY like this):
+User: "explore" -> {"action": "explore", "message": "I'll look around!"}
+User: "go auto" -> {"action": "auto", "message": "Going autonomous!"}
+User: "get food" -> {"action": "auto", "message": "I'll find food!"}
+User: "how are you" -> {"action": "idle", "message": "I'm great!"}
+User: "defend me" -> {"action": "defend", "message": "I'll protect you!"}
+User: "follow" -> {"action": "follow", "message": "Following you!"}
 """.formatted(companionName);
     }
 
@@ -247,10 +246,59 @@ Response: {"action": "attack", "target": "zombie", "message": "Fighting the zomb
             Player2NPC.LOGGER.debug("Parsed LLM action: {}", json.get("action"));
             return CompanionAction.fromJson(json);
         } catch (Exception e) {
-            Player2NPC.LOGGER.warn("Failed to parse LLM response as JSON: {} - Error: {}", response, e.getMessage());
-            // Return idle action with the raw response as message
-            return new CompanionAction("idle", response);
+            Player2NPC.LOGGER.warn("Failed to parse LLM response as JSON, trying keyword fallback: {}", response);
+            // Try keyword-based fallback parsing
+            return parseFromKeywords(response);
         }
+    }
+
+    /**
+     * Fallback parser that extracts action from plain text using keywords.
+     */
+    private CompanionAction parseFromKeywords(String text) {
+        String lower = text.toLowerCase();
+
+        // Check for action keywords
+        if (lower.contains("follow")) {
+            return new CompanionAction("follow", text);
+        }
+        if (lower.contains("explor") || lower.contains("look around") || lower.contains("wander")) {
+            return new CompanionAction("explore", text);
+        }
+        if (lower.contains("auto") || lower.contains("independent") || lower.contains("on my own")) {
+            return new CompanionAction("auto", text);
+        }
+        if (lower.contains("defend") || lower.contains("protect")) {
+            return new CompanionAction("defend", text);
+        }
+        if (lower.contains("attack") || lower.contains("fight") || lower.contains("kill")) {
+            return new CompanionAction("attack", text);
+        }
+        if (lower.contains("hunt") || lower.contains("food") || lower.contains("eat")) {
+            return new CompanionAction("auto", text);  // Auto mode handles hunting
+        }
+        if (lower.contains("gear") || lower.contains("equip") || lower.contains("armor") || lower.contains("weapon")) {
+            return new CompanionAction("auto", text);  // Auto mode handles equipping
+        }
+        if (lower.contains("stay") || lower.contains("stop") || lower.contains("wait")) {
+            return new CompanionAction("stay", text);
+        }
+        if (lower.contains("come") || lower.contains("here")) {
+            return new CompanionAction("come", text);
+        }
+        if (lower.contains("home")) {
+            return new CompanionAction("home", text);
+        }
+        if (lower.contains("scan")) {
+            return new CompanionAction("scan", text);
+        }
+        if (lower.contains("status") || lower.contains("health") || lower.contains("inventory")) {
+            return new CompanionAction("status", text);
+        }
+
+        // Default to idle with the response as message
+        Player2NPC.LOGGER.info("No action keyword found, defaulting to idle");
+        return new CompanionAction("idle", text);
     }
 
     public void clearHistory() {
