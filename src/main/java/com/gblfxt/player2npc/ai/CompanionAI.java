@@ -18,6 +18,11 @@ import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.SwordItem;
+import net.minecraft.world.item.AxeItem;
+import net.minecraft.world.item.ArmorItem;
+import net.minecraft.world.entity.EquipmentSlot;
 
 import java.util.Comparator;
 import java.util.List;
@@ -669,35 +674,86 @@ public class CompanionAI {
         ItemStack currentWeapon = companion.getMainHandItem();
         if (!currentWeapon.isEmpty()) {
             sendMessage("I'm already holding " + currentWeapon.getHoverName().getString() + "!");
+            return;
+        }
+
+        // Search inventory for weapons
+        ItemStack bestWeapon = ItemStack.EMPTY;
+        int bestSlot = -1;
+
+        for (int i = 0; i < companion.getContainerSize(); i++) {
+            ItemStack stack = companion.getItem(i);
+            if (stack.isEmpty()) continue;
+
+            Item item = stack.getItem();
+            if (item instanceof SwordItem || item instanceof AxeItem) {
+                bestWeapon = stack;
+                bestSlot = i;
+                break; // Take first weapon found
+            }
+        }
+
+        if (!bestWeapon.isEmpty() && bestSlot >= 0) {
+            // Equip the weapon
+            companion.setItemSlot(EquipmentSlot.MAINHAND, bestWeapon.copy());
+            companion.setItem(bestSlot, ItemStack.EMPTY);
+            sendMessage("Equipped " + bestWeapon.getHoverName().getString() + "!");
         } else {
-            // Trigger autonomous mode to find and equip gear
-            sendMessage("I don't have a weapon. Going to look for one in storage!");
+            // No weapon in inventory, go look for one
+            sendMessage("I don't have any weapons in my inventory. Going to look for one!");
             startAutonomous(32);
         }
     }
 
     private void reportInventory() {
+        StringBuilder sb = new StringBuilder();
+
+        // Report equipped items
         ItemStack mainHand = companion.getMainHandItem();
         ItemStack offHand = companion.getOffhandItem();
 
-        StringBuilder sb = new StringBuilder("I'm holding: ");
-        boolean hasItems = false;
-
         if (!mainHand.isEmpty()) {
-            sb.append(mainHand.getHoverName().getString()).append(" (main hand)");
-            hasItems = true;
+            sb.append("Wielding: ").append(mainHand.getHoverName().getString());
         }
         if (!offHand.isEmpty()) {
-            if (hasItems) sb.append(", ");
-            sb.append(offHand.getHoverName().getString()).append(" (off hand)");
-            hasItems = true;
+            if (sb.length() > 0) sb.append(". ");
+            sb.append("Off-hand: ").append(offHand.getHoverName().getString());
         }
 
-        if (!hasItems) {
-            sendMessage("I'm not holding anything.");
-        } else {
-            sendMessage(sb.toString());
+        // Count inventory items
+        int itemCount = 0;
+        int weaponCount = 0;
+        int foodCount = 0;
+        int armorCount = 0;
+
+        for (int i = 0; i < companion.getContainerSize(); i++) {
+            ItemStack stack = companion.getItem(i);
+            if (stack.isEmpty()) continue;
+
+            itemCount += stack.getCount();
+            Item item = stack.getItem();
+
+            if (item instanceof SwordItem || item instanceof AxeItem) {
+                weaponCount++;
+            } else if (item instanceof ArmorItem) {
+                armorCount++;
+            } else if (stack.getFoodProperties(companion) != null) {
+                foodCount += stack.getCount();
+            }
         }
+
+        if (sb.length() > 0) sb.append(". ");
+
+        if (itemCount == 0) {
+            sb.append("My inventory is empty.");
+        } else {
+            sb.append("Inventory: ").append(itemCount).append(" items");
+            if (weaponCount > 0) sb.append(", ").append(weaponCount).append(" weapons");
+            if (armorCount > 0) sb.append(", ").append(armorCount).append(" armor pieces");
+            if (foodCount > 0) sb.append(", ").append(foodCount).append(" food");
+        }
+
+        sendMessage(sb.toString());
     }
 
     private void requestTeleport(String targetPlayer) {
