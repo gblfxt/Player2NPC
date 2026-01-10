@@ -522,4 +522,235 @@ public class AE2Integration {
 
         return items;
     }
+
+    /**
+     * Request crafting of an item from the ME network.
+     * Returns true if the crafting job was successfully submitted.
+     */
+    public static boolean requestCrafting(Level level, BlockPos accessPoint, Item item, int count) {
+        if (!isAE2Loaded()) {
+            return false;
+        }
+
+        try {
+            BlockEntity be = level.getBlockEntity(accessPoint);
+            if (be == null) return false;
+
+            Object grid = getGridFromBlockEntity(be);
+            if (grid == null) {
+                Player2NPC.LOGGER.info("AE2 Craft: Could not get grid");
+                return false;
+            }
+
+            // Get crafting service
+            Object craftingService = getCraftingService(grid);
+            if (craftingService == null) {
+                Player2NPC.LOGGER.info("AE2 Craft: Could not get crafting service");
+                return false;
+            }
+
+            // Create AEItemKey for the item we want to craft
+            Object aeItemKey = createAEItemKey(item);
+            if (aeItemKey == null) {
+                Player2NPC.LOGGER.info("AE2 Craft: Could not create AEItemKey for {}", item);
+                return false;
+            }
+
+            // Check if item is craftable
+            if (!isCraftable(craftingService, aeItemKey)) {
+                Player2NPC.LOGGER.info("AE2 Craft: {} is not craftable (no pattern)", item);
+                return false;
+            }
+
+            // Submit crafting request
+            boolean submitted = submitCraftingRequest(craftingService, grid, aeItemKey, count);
+            if (submitted) {
+                Player2NPC.LOGGER.info("AE2 Craft: Submitted crafting request for {} x{}", item, count);
+            }
+            return submitted;
+
+        } catch (Exception e) {
+            Player2NPC.LOGGER.warn("AE2 Craft: Error requesting craft: {}", e.getMessage());
+            e.printStackTrace();
+        }
+
+        return false;
+    }
+
+    private static Object getCraftingService(Object grid) {
+        try {
+            // Try getCraftingService() first
+            for (var method : grid.getClass().getMethods()) {
+                if (method.getName().equals("getCraftingService") && method.getParameterCount() == 0) {
+                    return method.invoke(grid);
+                }
+            }
+
+            // Try getService(ICraftingService.class)
+            for (var method : grid.getClass().getMethods()) {
+                if (method.getName().equals("getService") && method.getParameterCount() == 1) {
+                    Class<?> craftingServiceClass = Class.forName("appeng.api.networking.crafting.ICraftingService");
+                    return method.invoke(grid, craftingServiceClass);
+                }
+            }
+        } catch (Exception e) {
+            Player2NPC.LOGGER.debug("AE2 Craft: Could not get crafting service: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private static Object createAEItemKey(Item item) {
+        try {
+            Class<?> aeItemKeyClass = Class.forName("appeng.api.stacks.AEItemKey");
+            var ofMethod = aeItemKeyClass.getMethod("of", ItemStack.class);
+            return ofMethod.invoke(null, new ItemStack(item));
+        } catch (Exception e) {
+            Player2NPC.LOGGER.debug("AE2 Craft: Could not create AEItemKey: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private static boolean isCraftable(Object craftingService, Object aeItemKey) {
+        try {
+            var isCraftableMethod = craftingService.getClass().getMethod("isCraftable",
+                    Class.forName("appeng.api.stacks.AEKey"));
+            return (boolean) isCraftableMethod.invoke(craftingService, aeItemKey);
+        } catch (Exception e) {
+            Player2NPC.LOGGER.debug("AE2 Craft: Could not check craftability: {}", e.getMessage());
+        }
+        return false;
+    }
+
+    private static boolean submitCraftingRequest(Object craftingService, Object grid, Object aeItemKey, int count) {
+        try {
+            // Create a crafting calculation
+            // ICraftingService.beginCraftingCalculation(Level, IActionSource, AEKey, long, CalculationStrategy)
+
+            Class<?> calcStrategyClass = Class.forName("appeng.api.networking.crafting.CalculationStrategy");
+            Object craftOnly = calcStrategyClass.getField("CRAFT_ONLY").get(null);
+
+            Class<?> actionSourceClass = Class.forName("appeng.api.networking.security.IActionSource");
+            Object actionSource = Class.forName("appeng.me.helpers.BaseActionSource")
+                    .getDeclaredConstructor().newInstance();
+
+            // Get the level from the grid
+            Object level = null;
+            for (var method : grid.getClass().getMethods()) {
+                if (method.getName().equals("getLevel") || method.getName().equals("getPivot")) {
+                    try {
+                        Object result = method.invoke(grid);
+                        if (result instanceof net.minecraft.world.level.Level) {
+                            level = result;
+                            break;
+                        }
+                        // If it's a node, get level from that
+                        if (result != null) {
+                            for (var m : result.getClass().getMethods()) {
+                                if (m.getName().equals("getLevel") && m.getParameterCount() == 0) {
+                                    Object l = m.invoke(result);
+                                    if (l instanceof net.minecraft.world.level.Level) {
+                                        level = l;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            if (level == null) {
+                Player2NPC.LOGGER.warn("AE2 Craft: Could not get level from grid");
+                return false;
+            }
+
+            // Begin the crafting calculation
+            var beginMethod = craftingService.getClass().getMethod("beginCraftingCalculation",
+                    net.minecraft.world.level.Level.class,
+                    actionSourceClass,
+                    Class.forName("appeng.api.stacks.AEKey"),
+                    long.class,
+                    calcStrategyClass);
+
+            Object futureJob = beginMethod.invoke(craftingService, level, actionSource, aeItemKey, (long) count, craftOnly);
+
+            if (futureJob == null) {
+                Player2NPC.LOGGER.info("AE2 Craft: beginCraftingCalculation returned null");
+                return false;
+            }
+
+            // Get the crafting plan from the future (this blocks but should be quick)
+            var getMethod = futureJob.getClass().getMethod("get", long.class, java.util.concurrent.TimeUnit.class);
+            Object craftingPlan = getMethod.invoke(futureJob, 5L, java.util.concurrent.TimeUnit.SECONDS);
+
+            if (craftingPlan == null) {
+                Player2NPC.LOGGER.info("AE2 Craft: Could not get crafting plan");
+                return false;
+            }
+
+            // Check if the plan is valid (simulation was successful)
+            var simulationMethod = craftingPlan.getClass().getMethod("simulation");
+            boolean isSimulation = (boolean) simulationMethod.invoke(craftingPlan);
+
+            // Check bytes used - if 0, nothing to craft
+            var bytesMethod = craftingPlan.getClass().getMethod("bytes");
+            long bytes = (long) bytesMethod.invoke(craftingPlan);
+
+            Player2NPC.LOGGER.info("AE2 Craft: Plan simulation={}, bytes={}", isSimulation, bytes);
+
+            if (bytes <= 0) {
+                Player2NPC.LOGGER.info("AE2 Craft: Crafting plan has 0 bytes, nothing to craft");
+                return false;
+            }
+
+            // Submit the job
+            // ICraftingService.submitJob(ICraftingPlan, ICraftingRequester, ICraftingCPU, boolean, IActionSource)
+            var submitMethod = craftingService.getClass().getMethod("submitJob",
+                    Class.forName("appeng.api.networking.crafting.ICraftingPlan"),
+                    Class.forName("appeng.api.networking.crafting.ICraftingRequester"),
+                    Class.forName("appeng.api.networking.crafting.ICraftingCPU"),
+                    boolean.class,
+                    actionSourceClass);
+
+            Object linkResult = submitMethod.invoke(craftingService, craftingPlan, null, null, false, actionSource);
+
+            if (linkResult != null) {
+                Player2NPC.LOGGER.info("AE2 Craft: Job submitted successfully!");
+                return true;
+            } else {
+                Player2NPC.LOGGER.info("AE2 Craft: submitJob returned null (possibly no CPU available)");
+            }
+
+        } catch (Exception e) {
+            Player2NPC.LOGGER.warn("AE2 Craft: Error submitting craft request: {}", e.getMessage());
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    /**
+     * Get a list of iron armor items.
+     */
+    public static List<Item> getIronArmorItems() {
+        List<Item> items = new ArrayList<>();
+        items.add(net.minecraft.world.item.Items.IRON_HELMET);
+        items.add(net.minecraft.world.item.Items.IRON_CHESTPLATE);
+        items.add(net.minecraft.world.item.Items.IRON_LEGGINGS);
+        items.add(net.minecraft.world.item.Items.IRON_BOOTS);
+        items.add(net.minecraft.world.item.Items.IRON_SWORD);
+        return items;
+    }
+
+    /**
+     * Get a list of diamond armor items.
+     */
+    public static List<Item> getDiamondArmorItems() {
+        List<Item> items = new ArrayList<>();
+        items.add(net.minecraft.world.item.Items.DIAMOND_HELMET);
+        items.add(net.minecraft.world.item.Items.DIAMOND_CHESTPLATE);
+        items.add(net.minecraft.world.item.Items.DIAMOND_LEGGINGS);
+        items.add(net.minecraft.world.item.Items.DIAMOND_BOOTS);
+        items.add(net.minecraft.world.item.Items.DIAMOND_SWORD);
+        return items;
+    }
 }

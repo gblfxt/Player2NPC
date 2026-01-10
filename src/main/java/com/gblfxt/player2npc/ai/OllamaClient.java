@@ -106,6 +106,10 @@ GEAR/INVENTORY:
 - {"action": "equip"} - Equip the best weapon from your inventory
 - {"action": "inventory"} - Report what items you have in your inventory
 
+ME NETWORK (Applied Energistics 2):
+- {"action": "getgear", "material": "iron"} - Get iron armor/sword from ME network (craft if needed)
+- {"action": "getgear", "material": "diamond"} - Get diamond armor/sword from ME network (craft if needed)
+
 RULES:
 1. ONLY output JSON. Never output plain text.
 2. Every response MUST be a JSON object with "action" field
@@ -325,6 +329,26 @@ User: "follow" -> {"action": "follow", "message": "Following you!"}
             }
             CompanionAction action = new CompanionAction("tpa", text);
             action.setParameter("target", target);
+            return action;
+        }
+
+        // ME network gear retrieval
+        if (lower.contains("get iron") || lower.contains("iron set") || lower.contains("iron gear") ||
+            lower.contains("iron armor") || lower.contains("craft iron")) {
+            CompanionAction action = new CompanionAction("getgear", text);
+            action.setParameter("material", "iron");
+            return action;
+        }
+        if (lower.contains("get diamond") || lower.contains("diamond set") || lower.contains("diamond gear") ||
+            lower.contains("diamond armor") || lower.contains("craft diamond")) {
+            CompanionAction action = new CompanionAction("getgear", text);
+            action.setParameter("material", "diamond");
+            return action;
+        }
+        if (lower.contains("get gear from me") || lower.contains("me network") || lower.contains("from ae2") ||
+            lower.contains("from terminal")) {
+            CompanionAction action = new CompanionAction("getgear", text);
+            action.setParameter("material", "iron");  // Default to iron
             return action;
         }
 

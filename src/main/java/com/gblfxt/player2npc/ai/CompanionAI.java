@@ -2,6 +2,7 @@ package com.gblfxt.player2npc.ai;
 
 import com.gblfxt.player2npc.Config;
 import com.gblfxt.player2npc.Player2NPC;
+import com.gblfxt.player2npc.compat.AE2Integration;
 import com.gblfxt.player2npc.entity.CompanionEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -199,6 +200,10 @@ public class CompanionAI {
             case "tpdeny" -> denyTeleport();
             case "equip", "gear", "arm" -> equipBestGear();
             case "inventory", "inv", "items" -> reportInventory();
+            case "getgear", "getarmor", "craftgear", "ironset", "meget" -> {
+                String material = action.getString("material", "iron");
+                getGearFromME(material);
+            }
             default -> {
                 Player2NPC.LOGGER.warn("[{}] Unknown action: {}", companion.getCompanionName(), action.getAction());
                 currentState = AIState.IDLE;
@@ -240,7 +245,16 @@ public class CompanionAI {
         }
 
         double distance = companion.position().distanceTo(Vec3.atCenterOf(targetPos));
-        if (distance < 2.0) {
+        if (distance < 3.0) {
+            // Check for pending gear request first
+            if (pendingGearRequest != null && companion.level() instanceof ServerLevel serverLevel) {
+                GearRequest req = pendingGearRequest;
+                pendingGearRequest = null;
+                retrieveOrCraftGear(serverLevel, req.terminal(), req.items(), req.material());
+                targetPos = null;
+                return;
+            }
+
             sendMessage("I've arrived at the destination.");
             currentState = AIState.IDLE;
             targetPos = null;
@@ -754,6 +768,163 @@ public class CompanionAI {
         }
 
         sendMessage(sb.toString());
+    }
+
+    private void getGearFromME(String material) {
+        if (!AE2Integration.isAE2Loaded()) {
+            sendMessage("I can't find an ME network here!");
+            return;
+        }
+
+        if (!(companion.level() instanceof ServerLevel serverLevel)) {
+            sendMessage("Something's wrong with the world...");
+            return;
+        }
+
+        // Find ME access point
+        List<BlockPos> meAccessPoints = AE2Integration.findMEAccessPoints(
+                serverLevel, companion.blockPosition(), 32);
+
+        if (meAccessPoints.isEmpty()) {
+            sendMessage("I can't find an ME terminal nearby!");
+            return;
+        }
+
+        BlockPos terminal = meAccessPoints.get(0);
+        sendMessage("Found ME terminal! Going to get " + material + " gear...");
+
+        // Determine which items to get based on material
+        List<Item> targetItems;
+        if (material.toLowerCase().contains("diamond")) {
+            targetItems = AE2Integration.getDiamondArmorItems();
+        } else {
+            targetItems = AE2Integration.getIronArmorItems();
+        }
+
+        // Navigate to the terminal first
+        currentState = AIState.GOING_TO;
+        targetPos = terminal;
+
+        // We'll need to process this in tick() - for now start moving
+        // and set up a task to extract/craft when we arrive
+        companion.getNavigation().moveTo(terminal.getX() + 0.5, terminal.getY(), terminal.getZ() + 0.5, 1.0);
+
+        // Schedule gear retrieval after reaching terminal
+        // For now, do it immediately if close enough
+        double distance = companion.position().distanceTo(net.minecraft.world.phys.Vec3.atCenterOf(terminal));
+        if (distance < 5.0) {
+            retrieveOrCraftGear(serverLevel, terminal, targetItems, material);
+        } else {
+            // Store pending gear request for when we arrive
+            pendingGearRequest = new GearRequest(terminal, targetItems, material);
+            sendMessage("On my way to the terminal...");
+        }
+    }
+
+    private GearRequest pendingGearRequest = null;
+
+    private record GearRequest(BlockPos terminal, List<Item> items, String material) {}
+
+    private void retrieveOrCraftGear(ServerLevel level, BlockPos terminal, List<Item> targetItems, String material) {
+        int retrieved = 0;
+        int craftRequested = 0;
+
+        for (Item item : targetItems) {
+            // First try to extract from ME network
+            List<ItemStack> extracted = AE2Integration.extractItems(level, terminal,
+                    stack -> stack.getItem() == item, 1);
+
+            if (!extracted.isEmpty()) {
+                // Add to companion inventory and equip
+                for (ItemStack stack : extracted) {
+                    addToInventoryAndEquip(stack);
+                    retrieved++;
+                }
+            } else {
+                // Item not in network, request crafting
+                boolean craftStarted = AE2Integration.requestCrafting(level, terminal, item, 1);
+                if (craftStarted) {
+                    craftRequested++;
+                    Player2NPC.LOGGER.info("[{}] Requested crafting of {}", companion.getCompanionName(), item);
+                }
+            }
+        }
+
+        // Report results
+        StringBuilder result = new StringBuilder();
+        if (retrieved > 0) {
+            result.append("Got ").append(retrieved).append(" ").append(material).append(" pieces! ");
+        }
+        if (craftRequested > 0) {
+            result.append("Requested crafting of ").append(craftRequested).append(" items. ");
+        }
+        if (retrieved == 0 && craftRequested == 0) {
+            result.append("Couldn't find or craft any ").append(material).append(" gear. Check if patterns are set up!");
+        }
+
+        sendMessage(result.toString().trim());
+
+        // After getting gear, equip it
+        if (retrieved > 0) {
+            equipAllGear();
+        }
+
+        currentState = AIState.IDLE;
+    }
+
+    private void addToInventoryAndEquip(ItemStack stack) {
+        Item item = stack.getItem();
+
+        // Equip directly if it's armor or weapon
+        if (item instanceof ArmorItem armorItem) {
+            EquipmentSlot slot = armorItem.getEquipmentSlot();
+            ItemStack current = companion.getItemBySlot(slot);
+            if (current.isEmpty()) {
+                companion.setItemSlot(slot, stack.copy());
+                Player2NPC.LOGGER.info("[{}] Equipped {}", companion.getCompanionName(), item);
+                return;
+            }
+        }
+
+        if (item instanceof SwordItem || item instanceof AxeItem) {
+            if (companion.getMainHandItem().isEmpty()) {
+                companion.setItemSlot(EquipmentSlot.MAINHAND, stack.copy());
+                Player2NPC.LOGGER.info("[{}] Equipped {}", companion.getCompanionName(), item);
+                return;
+            }
+        }
+
+        // Otherwise add to inventory
+        for (int i = 0; i < companion.getContainerSize(); i++) {
+            if (companion.getItem(i).isEmpty()) {
+                companion.setItem(i, stack.copy());
+                return;
+            }
+        }
+    }
+
+    private void equipAllGear() {
+        // Go through inventory and equip any armor/weapons
+        for (int i = 0; i < companion.getContainerSize(); i++) {
+            ItemStack stack = companion.getItem(i);
+            if (stack.isEmpty()) continue;
+
+            Item item = stack.getItem();
+
+            if (item instanceof ArmorItem armorItem) {
+                EquipmentSlot slot = armorItem.getEquipmentSlot();
+                if (companion.getItemBySlot(slot).isEmpty()) {
+                    companion.setItemSlot(slot, stack.copy());
+                    companion.setItem(i, ItemStack.EMPTY);
+                }
+            }
+
+            if ((item instanceof SwordItem || item instanceof AxeItem) &&
+                    companion.getMainHandItem().isEmpty()) {
+                companion.setItemSlot(EquipmentSlot.MAINHAND, stack.copy());
+                companion.setItem(i, ItemStack.EMPTY);
+            }
+        }
     }
 
     private void requestTeleport(String targetPlayer) {
