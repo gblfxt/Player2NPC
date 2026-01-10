@@ -1,6 +1,7 @@
 package com.gblfxt.player2npc.ai;
 
 import com.gblfxt.player2npc.Player2NPC;
+import com.gblfxt.player2npc.compat.AE2Integration;
 import com.gblfxt.player2npc.entity.CompanionEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -32,6 +33,7 @@ public class AutonomousTask {
 
     // Targets
     private BlockPos targetStorage = null;
+    private BlockPos meAccessPoint = null;  // AE2 ME network access
     private net.minecraft.world.entity.Entity huntTarget = null;
     private BlockPos homePos = null;
 
@@ -115,8 +117,29 @@ public class AutonomousTask {
             targetStorage = storageBlocks.get(0);
         }
 
-        Player2NPC.LOGGER.debug("Scanned {} storage containers, found {} item types",
-                storageBlocks.size(), baseResources.size());
+        // Also check for AE2 ME networks
+        List<BlockPos> meAccessPoints = AE2Integration.findMEAccessPoints(
+                companion.level(), companion.blockPosition(), baseRadius);
+
+        if (!meAccessPoints.isEmpty()) {
+            meAccessPoint = meAccessPoints.get(0);
+
+            // Query ME network for available items
+            List<ItemStack> meItems = AE2Integration.queryAvailableItems(
+                    companion.level(), meAccessPoint,
+                    stack -> true  // Get all items
+            );
+
+            for (ItemStack stack : meItems) {
+                String name = stack.getItem().toString();
+                baseResources.merge(name, stack.getCount(), Integer::sum);
+            }
+
+            report("Found ME network access point!");
+        }
+
+        Player2NPC.LOGGER.debug("Scanned {} storage containers + {} ME access points, found {} item types",
+                storageBlocks.size(), meAccessPoints.size(), baseResources.size());
     }
 
     private List<BlockPos> findStorageContainers() {
@@ -182,9 +205,21 @@ public class AutonomousTask {
             return;
         }
 
-        // Priority 2: Hunt for food if low
+        // Priority 2: Get food if low
         if (foodCount < 5) {
             needs.add("food");
+
+            // Try to get food from ME network first
+            if (meAccessPoint != null && tryGetFoodFromME()) {
+                assessSelf();  // Re-check food count
+                if (foodCount >= 5) {
+                    report("Got food from the ME network!");
+                    changeState(AutonomousState.ASSESSING);
+                    return;
+                }
+            }
+
+            // Fall back to hunting
             changeState(AutonomousState.HUNTING);
             return;
         }
@@ -203,6 +238,44 @@ public class AutonomousTask {
 
         // Default: Rest
         changeState(AutonomousState.RESTING);
+    }
+
+    private boolean tryGetFoodFromME() {
+        if (meAccessPoint == null) return false;
+
+        // Move to ME access point if not close
+        double distance = companion.position().distanceTo(Vec3.atCenterOf(meAccessPoint));
+        if (distance > 5.0) {
+            companion.getNavigation().moveTo(
+                    meAccessPoint.getX() + 0.5,
+                    meAccessPoint.getY(),
+                    meAccessPoint.getZ() + 0.5,
+                    1.0
+            );
+            return false;  // Will try again next tick
+        }
+
+        // Extract food from ME network
+        List<ItemStack> food = AE2Integration.extractItems(
+                companion.level(),
+                meAccessPoint,
+                stack -> stack.getItem().getFoodProperties(stack, companion) != null,
+                16  // Get up to 16 food items
+        );
+
+        if (!food.isEmpty()) {
+            int totalFood = 0;
+            for (ItemStack stack : food) {
+                ItemStack remaining = companion.addToInventory(stack);
+                totalFood += stack.getCount() - remaining.getCount();
+            }
+            if (totalFood > 0) {
+                report("Retrieved " + totalFood + " food from ME network.");
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private boolean shouldEquip() {
