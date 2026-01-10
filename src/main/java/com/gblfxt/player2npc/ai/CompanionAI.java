@@ -22,6 +22,7 @@ import java.util.concurrent.CompletableFuture;
 public class CompanionAI {
     private final CompanionEntity companion;
     private final OllamaClient ollamaClient;
+    private final CompanionPersonality personality;
 
     // Current state
     private AIState currentState = AIState.IDLE;
@@ -33,12 +34,22 @@ public class CompanionAI {
     private MiningTask miningTask = null;
     private AutonomousTask autonomousTask = null;
 
+    // Owner tracking for greetings
+    private boolean ownerWasNearby = false;
+
     public CompanionAI(CompanionEntity companion) {
         this.companion = companion;
         this.ollamaClient = new OllamaClient(companion.getCompanionName());
+        this.personality = new CompanionPersonality(companion);
     }
 
     public void tick() {
+        // Tick personality for random chatter/emotes
+        personality.tick();
+
+        // Check if owner just came nearby (for greetings)
+        checkOwnerProximity();
+
         // Check for pending LLM response
         if (pendingAction != null && pendingAction.isDone()) {
             try {
@@ -181,6 +192,7 @@ public class CompanionAI {
         // Check for completion
         if (miningTask.isCompleted()) {
             sendMessage("Done! I gathered " + miningTask.getMinedCount() + " " + miningTask.getTargetBlockName() + ".");
+            personality.onTaskComplete();
             miningTask = null;
             currentState = AIState.IDLE;
             return;
@@ -189,9 +201,15 @@ public class CompanionAI {
         // Check for failure
         if (miningTask.isFailed()) {
             sendMessage(miningTask.getFailReason());
+            personality.doSadEmote();
             miningTask = null;
             currentState = AIState.IDLE;
             return;
+        }
+
+        // Random mining chatter
+        if (companion.tickCount % 200 == 0 && companion.getRandom().nextInt(3) == 0) {
+            personality.onTaskStart("mining");
         }
 
         // Progress report every 5 seconds
@@ -207,6 +225,7 @@ public class CompanionAI {
             targetEntity = findAttackTarget();
             if (targetEntity == null) {
                 sendMessage("No more enemies nearby.");
+                personality.onTaskComplete();
                 currentState = AIState.IDLE;
                 return;
             }
@@ -215,6 +234,7 @@ public class CompanionAI {
         double distance = companion.distanceTo(targetEntity);
         if (distance < 2.0) {
             companion.doHurtTarget(targetEntity);
+            personality.onCombat();
         } else {
             companion.getNavigation().moveTo(targetEntity, 1.2);
         }
@@ -239,6 +259,7 @@ public class CompanionAI {
             double distance = companion.distanceTo(targetEntity);
             if (distance < 2.0) {
                 companion.doHurtTarget(targetEntity);
+                personality.onCombat();
             } else {
                 companion.getNavigation().moveTo(targetEntity, 1.2);
             }
@@ -262,6 +283,24 @@ public class CompanionAI {
         if (companion.getRandom().nextInt(100) == 0) {
             companion.setYRot(companion.getYRot() + (companion.getRandom().nextFloat() - 0.5F) * 30);
         }
+    }
+
+    private void checkOwnerProximity() {
+        Player owner = companion.getOwner();
+        if (owner == null) {
+            ownerWasNearby = false;
+            return;
+        }
+
+        double distance = companion.distanceTo(owner);
+        boolean isNearby = distance < 32;
+
+        // Owner just arrived
+        if (isNearby && !ownerWasNearby) {
+            personality.onOwnerNearby();
+        }
+
+        ownerWasNearby = isNearby;
     }
 
     // Action implementations
@@ -294,12 +333,14 @@ public class CompanionAI {
 
         if (miningTask.isFailed()) {
             sendMessage(miningTask.getFailReason());
+            personality.doSadEmote();
             miningTask = null;
             return;
         }
 
         currentState = AIState.MINING;
         sendMessage("Starting to gather " + count + " " + blockType + ". I'll search within 32 blocks.");
+        personality.onTaskStart("mining");
     }
 
     private void startAttacking(String targetType) {
@@ -416,6 +457,10 @@ public class CompanionAI {
 
     public AIState getCurrentState() {
         return currentState;
+    }
+
+    public void onCompanionHurt() {
+        personality.onHurt();
     }
 
     public enum AIState {

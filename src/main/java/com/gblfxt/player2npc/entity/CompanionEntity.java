@@ -159,7 +159,11 @@ public class CompanionEntity extends PathfinderMob implements Container {
         if (!Config.COMPANIONS_TAKE_DAMAGE.get()) {
             return false;
         }
-        return super.hurt(source, amount);
+        boolean wasHurt = super.hurt(source, amount);
+        if (wasHurt && aiController != null) {
+            aiController.onCompanionHurt();
+        }
+        return wasHurt;
     }
 
     @Override
