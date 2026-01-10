@@ -1,5 +1,6 @@
 package com.gblfxt.player2npc.ai;
 
+import com.gblfxt.player2npc.ChunkLoadingManager;
 import com.gblfxt.player2npc.Player2NPC;
 import com.gblfxt.player2npc.entity.CompanionEntity;
 import net.minecraft.core.BlockPos;
@@ -124,6 +125,11 @@ public class MiningTask {
      * Check if a block is safe to mine (not part of a structure).
      */
     private boolean isSafeToMine(BlockPos pos) {
+        // Don't mine blocks outside loaded chunks
+        if (!ChunkLoadingManager.isBlockInLoadedChunks(companion, pos)) {
+            return false;
+        }
+
         // Don't mine in protected zones
         if (protectedPositions.contains(pos)) {
             return false;
@@ -437,8 +443,11 @@ public class MiningTask {
         BlockPos nearest = null;
         double nearestDist = Double.MAX_VALUE;
 
+        // Limit search radius to loaded chunks (32 blocks from center)
+        int effectiveRadius = Math.min(searchRadius, ChunkLoadingManager.getWorkingRadius());
+
         // Search in expanding shells for efficiency
-        for (int radius = 1; radius <= searchRadius; radius++) {
+        for (int radius = 1; radius <= effectiveRadius; radius++) {
             for (int x = -radius; x <= radius; x++) {
                 for (int y = -radius; y <= radius; y++) {
                     for (int z = -radius; z <= radius; z++) {
@@ -448,6 +457,12 @@ public class MiningTask {
                         }
 
                         BlockPos checkPos = companionPos.offset(x, y, z);
+
+                        // Skip blocks outside loaded chunks
+                        if (!ChunkLoadingManager.isBlockInLoadedChunks(companion, checkPos)) {
+                            continue;
+                        }
+
                         BlockState state = companion.level().getBlockState(checkPos);
 
                         if (targetBlocks.contains(state.getBlock())) {

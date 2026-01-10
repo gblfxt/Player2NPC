@@ -19,7 +19,20 @@ classes/
 *.iml
 *.ipr
 *.iws
+
+# Logs
 /logs/
+*.log
+
+# Local config (may contain server IPs, etc.)
+local.properties
+*.local.toml
+
+# Runtime files
+crash-reports/
+saves/
+resourcepacks/
+shaderpacks/
 
 # Copyright Files
 !/.idea/copyright/Baritone.xml

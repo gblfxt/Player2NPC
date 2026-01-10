@@ -1,5 +1,6 @@
 package com.gblfxt.player2npc.ai;
 
+import com.gblfxt.player2npc.ChunkLoadingManager;
 import com.gblfxt.player2npc.Player2NPC;
 import com.gblfxt.player2npc.compat.AE2Integration;
 import com.gblfxt.player2npc.entity.CompanionEntity;
@@ -67,7 +68,8 @@ public class AutonomousTask {
 
     public AutonomousTask(CompanionEntity companion, int baseRadius) {
         this.companion = companion;
-        this.baseRadius = baseRadius;
+        // Cap base radius to loaded chunk boundaries (32 blocks)
+        this.baseRadius = Math.min(baseRadius, ChunkLoadingManager.getWorkingRadius());
         this.homePos = companion.blockPosition();
     }
 
@@ -172,6 +174,12 @@ public class AutonomousTask {
             for (int y = -5; y <= 5; y++) {
                 for (int z = -baseRadius; z <= baseRadius; z++) {
                     BlockPos pos = center.offset(x, y, z);
+
+                    // Skip blocks outside loaded chunks
+                    if (!ChunkLoadingManager.isBlockInLoadedChunks(companion, pos)) {
+                        continue;
+                    }
+
                     BlockEntity be = companion.level().getBlockEntity(pos);
 
                     // Check for various storage types
@@ -595,6 +603,12 @@ public class AutonomousTask {
             for (int z = -5; z <= 5; z++) {
                 for (int y = -1; y <= 2; y++) {
                     BlockPos checkPos = pos.offset(x, y, z);
+
+                    // Skip blocks outside loaded chunks
+                    if (!ChunkLoadingManager.isBlockInLoadedChunks(companion, checkPos)) {
+                        continue;
+                    }
+
                     String blockName = companion.level().getBlockState(checkPos).getBlock().getName().getString().toLowerCase();
 
                     // Count fences and walls
@@ -998,6 +1012,11 @@ public class AutonomousTask {
             int offsetZ = companion.getRandom().nextInt(baseRadius * 2) - baseRadius;
             BlockPos candidate = currentPos.offset(offsetX, 0, offsetZ);
 
+            // Skip positions outside loaded chunks
+            if (!ChunkLoadingManager.isBlockInLoadedChunks(companion, candidate)) {
+                continue;
+            }
+
             // Find ground level
             BlockPos groundCandidate = candidate;
             for (int y = 5; y >= -5; y--) {
@@ -1081,14 +1100,23 @@ public class AutonomousTask {
             }
         }
 
-        // Wander around home
+        // Wander around home (within loaded chunks)
         if (companion.getNavigation().isDone() && ticksInState % 100 == 0) {
-            BlockPos wanderTarget = homePos.offset(
-                    companion.getRandom().nextInt(baseRadius * 2) - baseRadius,
-                    0,
-                    companion.getRandom().nextInt(baseRadius * 2) - baseRadius
-            );
-            companion.getNavigation().moveTo(wanderTarget.getX(), wanderTarget.getY(), wanderTarget.getZ(), 0.8);
+            BlockPos wanderTarget = null;
+            for (int i = 0; i < 5; i++) {  // Try up to 5 times to find a valid target
+                BlockPos candidate = homePos.offset(
+                        companion.getRandom().nextInt(baseRadius * 2) - baseRadius,
+                        0,
+                        companion.getRandom().nextInt(baseRadius * 2) - baseRadius
+                );
+                if (ChunkLoadingManager.isBlockInLoadedChunks(companion, candidate)) {
+                    wanderTarget = candidate;
+                    break;
+                }
+            }
+            if (wanderTarget != null) {
+                companion.getNavigation().moveTo(wanderTarget.getX(), wanderTarget.getY(), wanderTarget.getZ(), 0.8);
+            }
         }
 
         // Periodically reassess
