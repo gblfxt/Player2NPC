@@ -255,42 +255,64 @@ public class AE2Integration {
         try {
             Player2NPC.LOGGER.info("AE2: Trying to get grid from: {}", be.getClass().getSimpleName());
 
-            // List all methods for debugging
-            StringBuilder methodsList = new StringBuilder();
-            for (var method : be.getClass().getMethods()) {
-                if (method.getName().toLowerCase().contains("grid") ||
-                    method.getName().toLowerCase().contains("node") ||
-                    method.getName().toLowerCase().contains("network")) {
-                    methodsList.append(method.getName()).append("(), ");
-                }
-            }
-            if (methodsList.length() > 0) {
-                Player2NPC.LOGGER.info("AE2: Available methods: {}", methodsList);
-            }
+            // Get Direction enum values for methods that need a direction parameter
+            Class<?> directionClass = net.minecraft.core.Direction.class;
+            Object[] directions = directionClass.getEnumConstants();
 
             // Try to get IGridNode from the block entity
             for (var method : be.getClass().getMethods()) {
                 if (method.getName().equals("getGridNode") || method.getName().equals("getMainNode")) {
                     method.setAccessible(true);
-                    Object node = method.invoke(be, (Object[]) null);
-                    Player2NPC.LOGGER.info("AE2: {} returned: {}", method.getName(), node);
+                    Object node = null;
+
+                    // Check if method requires a Direction parameter
+                    if (method.getParameterCount() == 1 && method.getParameterTypes()[0].isAssignableFrom(directionClass)) {
+                        // Try each direction to find a valid grid node
+                        for (Object dir : directions) {
+                            try {
+                                node = method.invoke(be, dir);
+                                if (node != null) {
+                                    Player2NPC.LOGGER.info("AE2: {}({}) returned node", method.getName(), dir);
+                                    break;
+                                }
+                            } catch (Exception ignored) {}
+                        }
+                        // Also try null direction
+                        if (node == null) {
+                            try {
+                                node = method.invoke(be, (Object) null);
+                            } catch (Exception ignored) {}
+                        }
+                    } else if (method.getParameterCount() == 0) {
+                        // No parameters needed
+                        node = method.invoke(be);
+                    }
+
                     if (node != null) {
+                        Player2NPC.LOGGER.info("AE2: {} returned: {}", method.getName(), node.getClass().getSimpleName());
                         // Get grid from node
-                        var getGridMethod = node.getClass().getMethod("getGrid");
-                        Object grid = getGridMethod.invoke(node);
-                        Player2NPC.LOGGER.info("AE2: Got grid from node: {}", grid);
-                        return grid;
+                        for (var nodeMethod : node.getClass().getMethods()) {
+                            if (nodeMethod.getName().equals("getGrid") && nodeMethod.getParameterCount() == 0) {
+                                Object grid = nodeMethod.invoke(node);
+                                if (grid != null) {
+                                    Player2NPC.LOGGER.info("AE2: Got grid: {}", grid.getClass().getSimpleName());
+                                    return grid;
+                                }
+                            }
+                        }
                     }
                 }
             }
 
             // Try direct grid access
             for (var method : be.getClass().getMethods()) {
-                if (method.getName().equals("getGrid")) {
+                if (method.getName().equals("getGrid") && method.getParameterCount() == 0) {
                     method.setAccessible(true);
                     Object grid = method.invoke(be);
-                    Player2NPC.LOGGER.info("AE2: Direct getGrid() returned: {}", grid);
-                    return grid;
+                    if (grid != null) {
+                        Player2NPC.LOGGER.info("AE2: Direct getGrid() returned: {}", grid.getClass().getSimpleName());
+                        return grid;
+                    }
                 }
             }
 
