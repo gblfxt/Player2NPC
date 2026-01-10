@@ -5,6 +5,7 @@ import com.gblfxt.player2npc.Config;
 import com.gblfxt.player2npc.Player2NPC;
 import com.gblfxt.player2npc.ai.CompanionAI;
 import com.gblfxt.player2npc.compat.ArtifactsIntegration;
+import com.gblfxt.player2npc.compat.JourneyMapIntegration;
 import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -33,11 +34,17 @@ import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.portal.DimensionTransition;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+
+import net.minecraft.core.BlockPos;
 
 public class CompanionEntity extends PathfinderMob implements Container {
     // Synced data
@@ -132,6 +139,26 @@ public class CompanionEntity extends PathfinderMob implements Container {
             } else if (this.tickCount % 100 == 0) {
                 ChunkLoadingManager.updateChunkLoading(this);
             }
+
+            // Portal cooldown to prevent spam
+            if (portalCooldown > 0) {
+                portalCooldown--;
+            }
+
+            // Handle swimming
+            if (this.isInWater()) {
+                handleSwimming();
+            }
+
+            // Check for nearby boats periodically
+            if (this.tickCount % 40 == 0 && this.isInWater() && !this.isPassenger()) {
+                tryBoardNearbyBoat();
+            }
+
+            // Update map marker every 2 seconds
+            if (this.tickCount % 40 == 0) {
+                JourneyMapIntegration.updateCompanionMarker(this);
+            }
         }
 
         // Handle flying movement
@@ -141,6 +168,10 @@ public class CompanionEntity extends PathfinderMob implements Container {
     }
 
     private boolean canFlyWithArtifact = false;
+
+    // Portal awareness - prevent unintended dimension changes
+    private boolean allowPortalUse = false;
+    private int portalCooldown = 0;
 
     private void updateFlyingAbility() {
         boolean couldFly = canFlyWithArtifact;
@@ -174,12 +205,216 @@ public class CompanionEntity extends PathfinderMob implements Container {
         return canFlyWithArtifact;
     }
 
+    /**
+     * Handle swimming behavior when in water.
+     * Makes the companion swim to surface and move towards their target.
+     */
+    private void handleSwimming() {
+        // Swim upward when below water surface
+        if (this.isUnderWater()) {
+            Vec3 motion = this.getDeltaMovement();
+            // Swim upward
+            this.setDeltaMovement(motion.x, 0.04, motion.z);
+            this.setSwimming(true);
+        } else if (this.isInWater() && this.getDeltaMovement().y < 0) {
+            // Stay afloat at surface
+            Vec3 motion = this.getDeltaMovement();
+            this.setDeltaMovement(motion.x, 0.0, motion.z);
+        }
+
+        // Reduce drowning by swimming to surface
+        if (this.getAirSupply() < 100) {
+            // Prioritize getting air
+            Vec3 motion = this.getDeltaMovement();
+            this.setDeltaMovement(motion.x, 0.08, motion.z);
+        }
+    }
+
+    /**
+     * Try to board a nearby empty boat.
+     */
+    private void tryBoardNearbyBoat() {
+        if (this.getVehicle() != null) return; // Already in a vehicle
+
+        AABB searchBox = this.getBoundingBox().inflate(5.0);
+        List<net.minecraft.world.entity.vehicle.Boat> boats = this.level().getEntitiesOfClass(
+                net.minecraft.world.entity.vehicle.Boat.class,
+                searchBox,
+                boat -> boat.isAlive() && boat.getPassengers().isEmpty()
+        );
+
+        if (!boats.isEmpty()) {
+            net.minecraft.world.entity.vehicle.Boat nearestBoat = boats.stream()
+                    .min(Comparator.comparingDouble(boat -> this.distanceToSqr(boat)))
+                    .orElse(null);
+
+            if (nearestBoat != null && this.distanceTo(nearestBoat) < 3.0) {
+                this.startRiding(nearestBoat);
+                Player2NPC.LOGGER.info("[{}] Boarded a boat!", getCompanionName());
+
+                Player owner = getOwner();
+                if (owner != null) {
+                    owner.sendSystemMessage(Component.literal(
+                            "[" + getCompanionName() + "] I found a boat!"
+                    ));
+                }
+            } else if (nearestBoat != null) {
+                // Swim toward the boat
+                this.getNavigation().moveTo(nearestBoat, 1.2);
+            }
+        }
+    }
+
+    /**
+     * Exit from boat when owner exits or reaches land.
+     */
+    public void checkBoatExit() {
+        if (this.getVehicle() instanceof net.minecraft.world.entity.vehicle.Boat boat) {
+            // Exit if near land
+            BlockPos belowBoat = boat.blockPosition().below();
+            if (!this.level().getFluidState(belowBoat).isEmpty() &&
+                this.level().getBlockState(belowBoat.north()).isSolid() ||
+                this.level().getBlockState(belowBoat.south()).isSolid() ||
+                this.level().getBlockState(belowBoat.east()).isSolid() ||
+                this.level().getBlockState(belowBoat.west()).isSolid()) {
+                this.stopRiding();
+                Player2NPC.LOGGER.info("[{}] Exiting boat near land", getCompanionName());
+            }
+        }
+    }
+
+    /**
+     * Check if standing on an elevator block and use it.
+     * Supports various elevator mods (Quark, Elevator Mod, etc.)
+     */
+    public void tryUseElevator(boolean goUp) {
+        BlockPos below = this.blockPosition().below();
+        net.minecraft.world.level.block.state.BlockState state = this.level().getBlockState(below);
+        String blockName = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+
+        // Check if standing on an elevator block
+        if (blockName.contains("elevator") || blockName.contains("elevatoro")) {
+            // Find destination - look for matching elevator above or below
+            BlockPos searchStart = this.blockPosition();
+            int maxSearch = 64;
+
+            if (goUp) {
+                for (int y = 1; y <= maxSearch; y++) {
+                    BlockPos checkPos = searchStart.above(y);
+                    net.minecraft.world.level.block.state.BlockState checkState = this.level().getBlockState(checkPos.below());
+                    String checkName = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(checkState.getBlock()).toString();
+
+                    if (checkName.contains("elevator")) {
+                        // Found elevator above - check if space is clear
+                        if (this.level().getBlockState(checkPos).isAir() &&
+                            this.level().getBlockState(checkPos.above()).isAir()) {
+                            this.teleportTo(checkPos.getX() + 0.5, checkPos.getY(), checkPos.getZ() + 0.5);
+                            Player2NPC.LOGGER.info("[{}] Used elevator to go up to Y={}", getCompanionName(), checkPos.getY());
+                            return;
+                        }
+                    }
+                }
+            } else {
+                for (int y = 1; y <= maxSearch; y++) {
+                    BlockPos checkPos = searchStart.below(y);
+                    net.minecraft.world.level.block.state.BlockState checkState = this.level().getBlockState(checkPos.below());
+                    String checkName = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(checkState.getBlock()).toString();
+
+                    if (checkName.contains("elevator")) {
+                        // Found elevator below - check if space is clear
+                        if (this.level().getBlockState(checkPos).isAir() &&
+                            this.level().getBlockState(checkPos.above()).isAir()) {
+                            this.teleportTo(checkPos.getX() + 0.5, checkPos.getY(), checkPos.getZ() + 0.5);
+                            Player2NPC.LOGGER.info("[{}] Used elevator to go down to Y={}", getCompanionName(), checkPos.getY());
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Check if standing on an elevator block.
+     */
+    public boolean isOnElevator() {
+        BlockPos below = this.blockPosition().below();
+        net.minecraft.world.level.block.state.BlockState state = this.level().getBlockState(below);
+        String blockName = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+        return blockName.contains("elevator");
+    }
+
     @Override
     public void remove(RemovalReason reason) {
         if (!this.level().isClientSide) {
             ChunkLoadingManager.stopLoadingChunks(this);
+            JourneyMapIntegration.removeCompanionMarker(this);
         }
         super.remove(reason);
+    }
+
+    /**
+     * Control portal usage to prevent unintended dimension changes and duplication.
+     * Companions will only use portals when explicitly commanded to.
+     */
+    @Override
+    public Entity changeDimension(DimensionTransition transition) {
+        if (!allowPortalUse) {
+            // Companion wandered into portal without being told - push them back
+            Player2NPC.LOGGER.info("[{}] Blocked unintended portal use - stepping back", getCompanionName());
+            // Push companion away from portal
+            Vec3 motion = this.getDeltaMovement();
+            this.setDeltaMovement(motion.x * -2, 0.3, motion.z * -2);
+            return null;
+        }
+
+        if (portalCooldown > 0) {
+            Player2NPC.LOGGER.info("[{}] Portal on cooldown, waiting...", getCompanionName());
+            return null;
+        }
+
+        // Stop chunk loading in old dimension before changing
+        ChunkLoadingManager.stopLoadingChunks(this);
+
+        Player2NPC.LOGGER.info("[{}] Changing dimension via portal", getCompanionName());
+
+        // Perform the dimension change
+        Entity newEntity = super.changeDimension(transition);
+
+        if (newEntity instanceof CompanionEntity newCompanion) {
+            // Transfer state to new entity
+            newCompanion.portalCooldown = 200; // 10 second cooldown
+            newCompanion.allowPortalUse = false; // Reset portal permission
+
+            // Start chunk loading in new dimension
+            ChunkLoadingManager.startLoadingChunks(newCompanion);
+
+            Player2NPC.LOGGER.info("[{}] Successfully changed dimension", newCompanion.getCompanionName());
+        }
+
+        return newEntity;
+    }
+
+    /**
+     * Allow the companion to use portals (called when commanded to go through)
+     */
+    public void allowPortalUse() {
+        this.allowPortalUse = true;
+        Player2NPC.LOGGER.info("[{}] Portal use enabled", getCompanionName());
+    }
+
+    /**
+     * Disallow portal use (resets after dimension change)
+     */
+    public void disallowPortalUse() {
+        this.allowPortalUse = false;
+    }
+
+    /**
+     * Check if companion can use portals
+     */
+    public boolean canUsePortal() {
+        return allowPortalUse && portalCooldown <= 0;
     }
 
     private void pickupItems() {
@@ -582,6 +817,10 @@ public class CompanionEntity extends PathfinderMob implements Container {
         if (!offhandItem.isEmpty()) {
             tag.put("Offhand", offhandItem.save(this.registryAccess()));
         }
+
+        // Save portal state
+        tag.putBoolean("AllowPortalUse", allowPortalUse);
+        tag.putInt("PortalCooldown", portalCooldown);
     }
 
     @Override
@@ -619,6 +858,10 @@ public class CompanionEntity extends PathfinderMob implements Container {
         if (tag.contains("Offhand")) {
             offhandItem = ItemStack.parse(this.registryAccess(), tag.getCompound("Offhand")).orElse(ItemStack.EMPTY);
         }
+
+        // Load portal state
+        allowPortalUse = tag.getBoolean("AllowPortalUse");
+        portalCooldown = tag.getInt("PortalCooldown");
 
         // Recreate AI controller on load
         if (!this.level().isClientSide && aiController == null) {

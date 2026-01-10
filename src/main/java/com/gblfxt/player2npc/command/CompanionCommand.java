@@ -189,23 +189,46 @@ public class CompanionCommand {
             return 0;
         }
 
-        // Search wide area for companions (much larger than before)
-        List<CompanionEntity> companions = player.level().getEntitiesOfClass(
-                CompanionEntity.class,
-                player.getBoundingBox().inflate(10000),  // Search very large area
-                c -> c.isOwner(player)
-        );
+        // Search across ALL dimensions for companions
+        java.util.ArrayList<CompanionEntity> allCompanions = new java.util.ArrayList<>();
 
-        if (companions.isEmpty()) {
+        if (player.getServer() != null) {
+            for (ServerLevel level : player.getServer().getAllLevels()) {
+                // Get all entities of type CompanionEntity in this level
+                level.getEntities(Player2NPC.COMPANION.get(), entity -> {
+                    if (entity instanceof CompanionEntity companion && companion.isOwner(player)) {
+                        allCompanions.add(companion);
+                    }
+                    return true; // Continue iterating
+                });
+            }
+        }
+
+        if (allCompanions.isEmpty()) {
             source.sendSuccess(() -> Component.literal("You have no companions. Use /companion summon <name> to create one."), false);
             return 1;
         }
 
         StringBuilder sb = new StringBuilder("Your companions:\n");
-        for (CompanionEntity companion : companions) {
+        for (CompanionEntity companion : allCompanions) {
             String state = companion.getAIController() != null ?
                     companion.getAIController().getCurrentState().name() : "UNKNOWN";
-            double dist = player.distanceTo(companion);
+
+            // Get dimension name
+            String dimName = companion.level().dimension().location().toString();
+            if (dimName.equals("minecraft:overworld")) dimName = "Overworld";
+            else if (dimName.equals("minecraft:the_nether")) dimName = "Nether";
+            else if (dimName.equals("minecraft:the_end")) dimName = "The End";
+
+            // Calculate distance only if same dimension
+            String distStr;
+            if (companion.level().dimension().equals(player.level().dimension())) {
+                double dist = player.distanceTo(companion);
+                distStr = " (" + (int) dist + "m away)";
+            } else {
+                distStr = " [" + dimName + "]";
+            }
+
             sb.append(" - ").append(companion.getCompanionName())
                     .append(" (").append(state).append(")")
                     .append(" HP: ").append((int) companion.getHealth())
@@ -213,7 +236,7 @@ public class CompanionCommand {
                     .append(" at [").append((int) companion.getX())
                     .append(", ").append((int) companion.getY())
                     .append(", ").append((int) companion.getZ()).append("]")
-                    .append(" (").append((int) dist).append("m away)")
+                    .append(distStr)
                     .append("\n");
         }
 

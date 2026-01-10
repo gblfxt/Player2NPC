@@ -15,6 +15,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.AABB;
@@ -211,6 +212,19 @@ public class CompanionAI {
             }
             case "tpaccept" -> acceptTeleport();
             case "tpdeny" -> denyTeleport();
+            case "portal" -> {
+                String portalAction = action.getString("action", "enter");
+                handlePortalCommand(portalAction);
+            }
+            case "elevator" -> {
+                String direction = action.getString("direction", "up");
+                handleElevatorCommand(direction);
+            }
+            case "cobblestats" -> {
+                String detail = action.getString("detail", "full");
+                String target = action.getString("target", "");
+                handleCobblestatsCommand(detail, target);
+            }
             case "equip", "gear", "arm" -> equipBestGear();
             case "inventory", "inv", "items" -> reportInventory();
             case "getgear", "getarmor", "craftgear", "ironset", "meget" -> {
@@ -364,14 +378,35 @@ public class CompanionAI {
                 currentState = AIState.IDLE;
                 return;
             }
+            Player2NPC.LOGGER.info("[{}] New attack target: {}", companion.getCompanionName(),
+                    targetEntity.getType().getDescriptionId());
         }
 
         double distance = companion.distanceTo(targetEntity);
-        if (distance < 2.0) {
-            companion.doHurtTarget(targetEntity);
-            personality.onCombat();
+        if (distance < 3.0) {
+            // Face the target
+            companion.getLookControl().setLookAt(targetEntity, 30.0F, 30.0F);
+
+            // Attack!
+            if (companion.tickCount % 20 == 0) {  // Attack once per second
+                boolean hit = companion.doHurtTarget(targetEntity);
+                if (hit) {
+                    Player2NPC.LOGGER.debug("[{}] Hit {} for damage", companion.getCompanionName(),
+                            targetEntity.getType().getDescriptionId());
+                    personality.onCombat();
+                }
+            }
         } else {
-            companion.getNavigation().moveTo(targetEntity, 1.2);
+            // Move towards target aggressively
+            companion.getNavigation().moveTo(targetEntity, 1.4);  // Faster movement in combat
+        }
+
+        // Combat chatter every 5 seconds
+        if (companion.tickCount % 100 == 0) {
+            String targetName = targetEntity.hasCustomName() ?
+                    targetEntity.getCustomName().getString() :
+                    targetEntity.getType().getDescription().getString();
+            personality.onCombat();
         }
     }
 
@@ -382,21 +417,47 @@ public class CompanionAI {
             return;
         }
 
-        // Look for threats near owner
-        List<Monster> threats = companion.level().getEntitiesOfClass(
-                Monster.class,
-                owner.getBoundingBox().inflate(10),
-                monster -> monster.isAlive() && monster.getTarget() == owner
+        // Look for threats near owner - include any mob targeting the owner or companion
+        List<LivingEntity> threats = companion.level().getEntitiesOfClass(
+                LivingEntity.class,
+                owner.getBoundingBox().inflate(12),
+                entity -> {
+                    if (!entity.isAlive() || entity == companion || entity == owner) {
+                        return false;
+                    }
+                    if (entity instanceof Player || entity instanceof CompanionEntity) {
+                        return false;
+                    }
+                    // Check if it's a monster
+                    if (entity instanceof Monster) {
+                        return true;
+                    }
+                    // Check if any mob is targeting owner or companion
+                    if (entity instanceof Mob mob) {
+                        LivingEntity target = mob.getTarget();
+                        return target != null && (target == owner || target == companion);
+                    }
+                    return false;
+                }
         );
 
         if (!threats.isEmpty()) {
-            targetEntity = threats.get(0);
-            double distance = companion.distanceTo(targetEntity);
-            if (distance < 2.0) {
-                companion.doHurtTarget(targetEntity);
-                personality.onCombat();
-            } else {
-                companion.getNavigation().moveTo(targetEntity, 1.2);
+            // Sort by distance and get closest
+            targetEntity = threats.stream()
+                    .min(Comparator.comparingDouble(e -> companion.distanceTo(e)))
+                    .orElse(null);
+
+            if (targetEntity != null) {
+                double distance = companion.distanceTo(targetEntity);
+                if (distance < 3.0) {
+                    companion.getLookControl().setLookAt(targetEntity, 30.0F, 30.0F);
+                    if (companion.tickCount % 20 == 0) {
+                        companion.doHurtTarget(targetEntity);
+                        personality.onCombat();
+                    }
+                } else {
+                    companion.getNavigation().moveTo(targetEntity, 1.4);
+                }
             }
         } else {
             // No threats, stay near owner
@@ -529,20 +590,41 @@ public class CompanionAI {
         }
 
         final EntityType<?> searchType = specificType;
+        Player owner = companion.getOwner();
 
         List<LivingEntity> entities = companion.level().getEntitiesOfClass(
                 LivingEntity.class,
                 companion.getBoundingBox().inflate(16),
                 e -> {
-                    if (!e.isAlive() || e == companion || e == companion.getOwner()) {
+                    if (!e.isAlive() || e == companion || e == owner) {
+                        return false;
+                    }
+                    // Never attack players or companions
+                    if (e instanceof Player || e instanceof CompanionEntity) {
                         return false;
                     }
                     // If specific type requested, match it
                     if (searchType != null) {
                         return e.getType() == searchType;
                     }
-                    // Otherwise, target any monster
-                    return e instanceof Monster;
+                    // Target anything that is hostile (Monster is a subclass)
+                    if (e instanceof Monster) {
+                        return true;
+                    }
+                    // Target any mob that is targeting the owner or companion
+                    if (e instanceof Mob mob) {
+                        LivingEntity target = mob.getTarget();
+                        if (target != null && (target == owner || target == companion)) {
+                            return true;
+                        }
+                    }
+                    // Target anything with "hostile" or aggressive in its name (for modded mobs)
+                    String entityName = e.getType().getDescriptionId().toLowerCase();
+                    if (entityName.contains("hostile") || entityName.contains("titan") ||
+                        entityName.contains("boss") || entityName.contains("monster")) {
+                        return true;
+                    }
+                    return false;
                 }
         );
 
@@ -1357,16 +1439,15 @@ public class CompanionAI {
     }
 
     private void equipBestGear() {
-        // Check current weapon
+        // Check current weapon - only skip if already holding a WEAPON
         ItemStack currentWeapon = companion.getMainHandItem();
-        if (!currentWeapon.isEmpty()) {
-            sendMessage("I'm already holding " + currentWeapon.getHoverName().getString() + "!");
-            return;
-        }
+        boolean holdingWeapon = !currentWeapon.isEmpty() &&
+            (currentWeapon.getItem() instanceof SwordItem || currentWeapon.getItem() instanceof AxeItem);
 
-        // Search inventory for weapons
+        // Search inventory for best weapon
         ItemStack bestWeapon = ItemStack.EMPTY;
         int bestSlot = -1;
+        double bestDamage = holdingWeapon ? getWeaponDamage(currentWeapon) : 0;
 
         for (int i = 0; i < companion.getContainerSize(); i++) {
             ItemStack stack = companion.getItem(i);
@@ -1374,22 +1455,41 @@ public class CompanionAI {
 
             Item item = stack.getItem();
             if (item instanceof SwordItem || item instanceof AxeItem) {
-                bestWeapon = stack;
-                bestSlot = i;
-                break; // Take first weapon found
+                double damage = getWeaponDamage(stack);
+                if (damage > bestDamage) {
+                    bestWeapon = stack;
+                    bestSlot = i;
+                    bestDamage = damage;
+                }
             }
         }
 
         if (!bestWeapon.isEmpty() && bestSlot >= 0) {
-            // Equip the weapon
+            // Put current item back in inventory if holding something
+            if (!currentWeapon.isEmpty()) {
+                companion.addToInventory(currentWeapon.copy());
+            }
+            // Equip the better weapon
             companion.setItemSlot(EquipmentSlot.MAINHAND, bestWeapon.copy());
             companion.setItem(bestSlot, ItemStack.EMPTY);
             sendMessage("Equipped " + bestWeapon.getHoverName().getString() + "!");
+        } else if (holdingWeapon) {
+            sendMessage("I'm already using my best weapon: " + currentWeapon.getHoverName().getString());
         } else {
             // No weapon in inventory, go look for one
             sendMessage("I don't have any weapons in my inventory. Going to look for one!");
             startAutonomous(32);
         }
+    }
+
+    private double getWeaponDamage(ItemStack stack) {
+        Item item = stack.getItem();
+        if (item instanceof SwordItem sword) {
+            return sword.getTier().getAttackDamageBonus();
+        } else if (item instanceof AxeItem axe) {
+            return axe.getTier().getAttackDamageBonus();
+        }
+        return 0;
     }
 
     private void reportInventory() {
@@ -1949,6 +2049,206 @@ public class CompanionAI {
                 Player2NPC.LOGGER.warn("[{}] TPDeny command failed: {}", companion.getCompanionName(), e.getMessage());
             }
         }
+    }
+
+    /**
+     * Handle portal/dimension travel commands.
+     */
+    private void handlePortalCommand(String action) {
+        switch (action) {
+            case "enter" -> {
+                // Allow portal use and walk towards nearest portal
+                companion.allowPortalUse();
+                sendMessage("Okay, I'll go through the portal!");
+
+                // Find nearest portal block
+                BlockPos nearestPortal = findNearestPortal(16);
+                if (nearestPortal != null) {
+                    companion.getNavigation().moveTo(
+                            nearestPortal.getX() + 0.5,
+                            nearestPortal.getY(),
+                            nearestPortal.getZ() + 0.5,
+                            1.0
+                    );
+                    Player2NPC.LOGGER.info("[{}] Walking to portal at {}", companion.getCompanionName(), nearestPortal);
+                } else {
+                    sendMessage("I don't see a portal nearby. Let me follow you to one!");
+                    // Start following instead
+                    currentState = AIState.FOLLOWING;
+                }
+            }
+            case "follow" -> {
+                // Follow owner through portal when they use it
+                companion.allowPortalUse();
+                sendMessage("I'll follow you through the portal!");
+                currentState = AIState.FOLLOWING;
+            }
+            case "stay" -> {
+                companion.disallowPortalUse();
+                sendMessage("Okay, I'll stay in this dimension.");
+                currentState = AIState.IDLE;
+            }
+        }
+    }
+
+    /**
+     * Find the nearest portal block within the given radius.
+     */
+    private BlockPos findNearestPortal(int radius) {
+        BlockPos companionPos = companion.blockPosition();
+        BlockPos nearest = null;
+        double nearestDist = Double.MAX_VALUE;
+
+        for (int x = -radius; x <= radius; x++) {
+            for (int y = -radius / 2; y <= radius / 2; y++) {
+                for (int z = -radius; z <= radius; z++) {
+                    BlockPos checkPos = companionPos.offset(x, y, z);
+                    if (companion.level() instanceof ServerLevel serverLevel) {
+                        net.minecraft.world.level.block.state.BlockState state = serverLevel.getBlockState(checkPos);
+                        // Check for nether portal or end portal
+                        if (state.is(net.minecraft.world.level.block.Blocks.NETHER_PORTAL) ||
+                            state.is(net.minecraft.world.level.block.Blocks.END_PORTAL)) {
+                            double dist = companionPos.distSqr(checkPos);
+                            if (dist < nearestDist) {
+                                nearestDist = dist;
+                                nearest = checkPos;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return nearest;
+    }
+
+    /**
+     * Handle elevator commands.
+     */
+    private void handleElevatorCommand(String direction) {
+        if (!companion.isOnElevator()) {
+            sendMessage("I need to be standing on an elevator block to use it!");
+            // Try to find nearby elevator
+            BlockPos elevatorPos = findNearbyElevator(16);
+            if (elevatorPos != null) {
+                sendMessage("I see an elevator nearby, let me walk over to it.");
+                companion.getNavigation().moveTo(
+                        elevatorPos.getX() + 0.5,
+                        elevatorPos.getY() + 1,
+                        elevatorPos.getZ() + 0.5,
+                        1.0
+                );
+            }
+            return;
+        }
+
+        boolean goUp = direction.equalsIgnoreCase("up");
+        sendMessage(goUp ? "Going up!" : "Going down!");
+        companion.tryUseElevator(goUp);
+    }
+
+    /**
+     * Handle cobblestats command to show Pokemon stats.
+     */
+    private void handleCobblestatsCommand(String detail, String targetName) {
+        if (!CobblemonIntegration.isCobblemonLoaded()) {
+            sendMessage("Cobblemon isn't installed - I can't check Pokemon stats!");
+            return;
+        }
+
+        // Find nearby Pokemon
+        List<Entity> nearbyPokemon = companion.level().getEntities(
+                companion,
+                companion.getBoundingBox().inflate(16),
+                CobblemonIntegration::isPokemon
+        );
+
+        if (nearbyPokemon.isEmpty()) {
+            sendMessage("I don't see any Pokemon nearby to check stats on.");
+            return;
+        }
+
+        // If a target name was specified, try to find that Pokemon
+        Entity targetPokemon = null;
+        if (targetName != null && !targetName.isEmpty()) {
+            String searchName = targetName.toLowerCase();
+            for (Entity pokemon : nearbyPokemon) {
+                String pokemonName = CobblemonIntegration.getPokemonDisplayName(pokemon);
+                String speciesName = CobblemonIntegration.getPokemonSpeciesName(pokemon);
+                if (pokemonName != null && pokemonName.toLowerCase().contains(searchName)) {
+                    targetPokemon = pokemon;
+                    break;
+                }
+                if (speciesName != null && speciesName.toLowerCase().contains(searchName)) {
+                    targetPokemon = pokemon;
+                    break;
+                }
+            }
+
+            if (targetPokemon == null) {
+                sendMessage("I can't find a Pokemon named '" + targetName + "' nearby.");
+                // List what's available
+                StringBuilder sb = new StringBuilder("I can see: ");
+                for (int i = 0; i < Math.min(nearbyPokemon.size(), 5); i++) {
+                    if (i > 0) sb.append(", ");
+                    sb.append(CobblemonIntegration.getPokemonSummary(nearbyPokemon.get(i)));
+                }
+                sendMessage(sb.toString());
+                return;
+            }
+        } else {
+            // No target specified - use the nearest Pokemon
+            targetPokemon = nearbyPokemon.stream()
+                    .min((a, b) -> Double.compare(companion.distanceTo(a), companion.distanceTo(b)))
+                    .orElse(null);
+        }
+
+        if (targetPokemon == null) {
+            sendMessage("I couldn't find a Pokemon to check.");
+            return;
+        }
+
+        // Get and display stats
+        if (detail.equals("brief")) {
+            String stats = CobblemonIntegration.getBriefPokemonStats(targetPokemon);
+            sendMessage(stats != null ? stats : "Couldn't read stats.");
+        } else {
+            String stats = CobblemonIntegration.getFullPokemonStats(targetPokemon);
+            if (stats != null) {
+                // Split into multiple messages for readability
+                String[] lines = stats.split("\n");
+                for (String line : lines) {
+                    if (!line.isEmpty()) {
+                        sendMessage(line);
+                    }
+                }
+            } else {
+                sendMessage("Couldn't read Pokemon stats.");
+            }
+        }
+    }
+
+    /**
+     * Find nearby elevator block.
+     */
+    private BlockPos findNearbyElevator(int radius) {
+        BlockPos companionPos = companion.blockPosition();
+
+        for (int x = -radius; x <= radius; x++) {
+            for (int y = -5; y <= 5; y++) {
+                for (int z = -radius; z <= radius; z++) {
+                    BlockPos checkPos = companionPos.offset(x, y, z);
+                    if (companion.level() instanceof ServerLevel serverLevel) {
+                        net.minecraft.world.level.block.state.BlockState state = serverLevel.getBlockState(checkPos);
+                        String blockName = net.minecraft.core.registries.BuiltInRegistries.BLOCK
+                                .getKey(state.getBlock()).toString();
+                        if (blockName.contains("elevator")) {
+                            return checkPos;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private void sendMessage(String message) {

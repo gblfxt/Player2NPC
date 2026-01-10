@@ -362,27 +362,36 @@ public class UltimineHelper {
         ItemStack bestTool = getBestToolFor(companion, state);
 
         if (bestTool.isEmpty()) {
+            Player2NPC.LOGGER.debug("[{}] No suitable tool found for {}",
+                companion.getCompanionName(), state.getBlock());
             return false;
         }
 
-        // Already equipped?
-        if (companion.getMainHandItem() == bestTool) {
+        // Already equipped? Use ItemStack comparison instead of reference
+        ItemStack currentHand = companion.getMainHandItem();
+        if (ItemStack.isSameItemSameComponents(currentHand, bestTool)) {
+            Player2NPC.LOGGER.debug("[{}] Already holding best tool: {}",
+                companion.getCompanionName(), bestTool.getHoverName().getString());
             return true;
         }
 
         // Find tool in inventory and swap
         for (int i = 0; i < companion.getContainerSize(); i++) {
-            if (companion.getItem(i) == bestTool) {
-                ItemStack currentHand = companion.getMainHandItem();
-                companion.setItemSlot(net.minecraft.world.entity.EquipmentSlot.MAINHAND, bestTool.copy());
-                companion.setItem(i, currentHand);
+            ItemStack slotItem = companion.getItem(i);
+            if (ItemStack.isSameItemSameComponents(slotItem, bestTool)) {
+                // Put current hand item into inventory slot
+                companion.setItem(i, currentHand.isEmpty() ? ItemStack.EMPTY : currentHand.copy());
+                // Equip the tool
+                companion.setItemSlot(net.minecraft.world.entity.EquipmentSlot.MAINHAND, slotItem.copy());
 
-                Player2NPC.LOGGER.debug("[{}] Equipped {} for mining",
+                Player2NPC.LOGGER.info("[{}] Equipped {} for mining",
                     companion.getCompanionName(), bestTool.getHoverName().getString());
                 return true;
             }
         }
 
+        Player2NPC.LOGGER.debug("[{}] Could not find tool {} in inventory to equip",
+            companion.getCompanionName(), bestTool.getHoverName().getString());
         return false;
     }
 

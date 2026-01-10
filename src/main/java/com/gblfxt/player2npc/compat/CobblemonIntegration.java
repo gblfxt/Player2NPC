@@ -297,4 +297,271 @@ public class CobblemonIntegration {
 
         return sb.toString();
     }
+
+    // ============== POKEMON STATS (IVs, EVs, Nature, Ability) ==============
+
+    /**
+     * Get Pokemon's nature name.
+     */
+    public static String getPokemonNature(Entity entity) {
+        if (!isPokemon(entity)) return null;
+
+        try {
+            Object pokemon = getPokemonData(entity);
+            if (pokemon == null) return "Unknown";
+
+            Method getNatureMethod = pokemon.getClass().getMethod("getNature");
+            Object nature = getNatureMethod.invoke(pokemon);
+
+            if (nature != null) {
+                Method getNameMethod = nature.getClass().getMethod("getName");
+                Object nameComponent = getNameMethod.invoke(nature);
+                if (nameComponent != null) {
+                    Method getStringMethod = nameComponent.getClass().getMethod("getString");
+                    return (String) getStringMethod.invoke(nameComponent);
+                }
+            }
+        } catch (Exception e) {
+            Player2NPC.LOGGER.debug("Error getting Pokemon nature: {}", e.getMessage());
+        }
+        return "Unknown";
+    }
+
+    /**
+     * Get Pokemon's ability name.
+     */
+    public static String getPokemonAbility(Entity entity) {
+        if (!isPokemon(entity)) return null;
+
+        try {
+            Object pokemon = getPokemonData(entity);
+            if (pokemon == null) return "Unknown";
+
+            Method getAbilityMethod = pokemon.getClass().getMethod("getAbility");
+            Object ability = getAbilityMethod.invoke(pokemon);
+
+            if (ability != null) {
+                Method getNameMethod = ability.getClass().getMethod("getName");
+                return (String) getNameMethod.invoke(ability);
+            }
+        } catch (Exception e) {
+            Player2NPC.LOGGER.debug("Error getting Pokemon ability: {}", e.getMessage());
+        }
+        return "Unknown";
+    }
+
+    /**
+     * Get Pokemon IVs as a formatted string.
+     */
+    public static String getPokemonIVs(Entity entity) {
+        if (!isPokemon(entity)) return null;
+
+        try {
+            Object pokemon = getPokemonData(entity);
+            if (pokemon == null) return "Unknown";
+
+            Method getIVsMethod = pokemon.getClass().getMethod("getIvs");
+            Object ivs = getIVsMethod.invoke(pokemon);
+
+            if (ivs != null) {
+                // IVs object has methods like getHP(), getAttack(), etc.
+                int hp = getStatValue(ivs, "getHP", "hp");
+                int atk = getStatValue(ivs, "getAttack", "attack");
+                int def = getStatValue(ivs, "getDefence", "defence");
+                int spa = getStatValue(ivs, "getSpecialAttack", "special_attack");
+                int spd = getStatValue(ivs, "getSpecialDefence", "special_defence");
+                int spe = getStatValue(ivs, "getSpeed", "speed");
+
+                int total = hp + atk + def + spa + spd + spe;
+                return String.format("HP:%d Atk:%d Def:%d SpA:%d SpD:%d Spe:%d (Total: %d/186)",
+                        hp, atk, def, spa, spd, spe, total);
+            }
+        } catch (Exception e) {
+            Player2NPC.LOGGER.debug("Error getting Pokemon IVs: {}", e.getMessage());
+        }
+        return "Unknown";
+    }
+
+    /**
+     * Get Pokemon EVs as a formatted string.
+     */
+    public static String getPokemonEVs(Entity entity) {
+        if (!isPokemon(entity)) return null;
+
+        try {
+            Object pokemon = getPokemonData(entity);
+            if (pokemon == null) return "Unknown";
+
+            Method getEVsMethod = pokemon.getClass().getMethod("getEvs");
+            Object evs = getEVsMethod.invoke(pokemon);
+
+            if (evs != null) {
+                int hp = getStatValue(evs, "getHP", "hp");
+                int atk = getStatValue(evs, "getAttack", "attack");
+                int def = getStatValue(evs, "getDefence", "defence");
+                int spa = getStatValue(evs, "getSpecialAttack", "special_attack");
+                int spd = getStatValue(evs, "getSpecialDefence", "special_defence");
+                int spe = getStatValue(evs, "getSpeed", "speed");
+
+                int total = hp + atk + def + spa + spd + spe;
+                return String.format("HP:%d Atk:%d Def:%d SpA:%d SpD:%d Spe:%d (Total: %d/510)",
+                        hp, atk, def, spa, spd, spe, total);
+            }
+        } catch (Exception e) {
+            Player2NPC.LOGGER.debug("Error getting Pokemon EVs: {}", e.getMessage());
+        }
+        return "Unknown";
+    }
+
+    /**
+     * Helper to get a stat value from IVs/EVs object.
+     */
+    private static int getStatValue(Object statsObj, String methodName, String altMethod) {
+        try {
+            Method method = statsObj.getClass().getMethod(methodName);
+            return (Integer) method.invoke(statsObj);
+        } catch (Exception e) {
+            try {
+                // Try alternative method name
+                Method method = statsObj.getClass().getMethod("get", String.class);
+                Object result = method.invoke(statsObj, altMethod);
+                if (result instanceof Integer) return (Integer) result;
+            } catch (Exception e2) {
+                // Try yet another pattern - some versions use getStat()
+                try {
+                    Method method = statsObj.getClass().getMethod("getOrDefault");
+                    return 0;
+                } catch (Exception e3) {
+                    // Give up
+                }
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * Get Pokemon's current HP and max HP.
+     */
+    public static String getPokemonHP(Entity entity) {
+        if (!isPokemon(entity)) return null;
+
+        try {
+            Object pokemon = getPokemonData(entity);
+            if (pokemon == null) return "Unknown";
+
+            Method getCurrentHealthMethod = pokemon.getClass().getMethod("getCurrentHealth");
+            int currentHP = (Integer) getCurrentHealthMethod.invoke(pokemon);
+
+            // Get max HP from stats
+            Method getHpMethod = pokemon.getClass().getMethod("getHp");
+            int maxHP = (Integer) getHpMethod.invoke(pokemon);
+
+            return currentHP + "/" + maxHP;
+        } catch (Exception e) {
+            // Fallback to entity health
+            if (entity instanceof LivingEntity living) {
+                return (int) living.getHealth() + "/" + (int) living.getMaxHealth();
+            }
+        }
+        return "Unknown";
+    }
+
+    /**
+     * Get Pokemon's friendship/happiness level.
+     */
+    public static int getPokemonFriendship(Entity entity) {
+        if (!isPokemon(entity)) return 0;
+
+        try {
+            Object pokemon = getPokemonData(entity);
+            if (pokemon == null) return 0;
+
+            Method getFriendshipMethod = pokemon.getClass().getMethod("getFriendship");
+            return (Integer) getFriendshipMethod.invoke(pokemon);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Get Pokemon's held item name.
+     */
+    public static String getPokemonHeldItem(Entity entity) {
+        if (!isPokemon(entity)) return null;
+
+        try {
+            Object pokemon = getPokemonData(entity);
+            if (pokemon == null) return "None";
+
+            Method getHeldItemMethod = pokemon.getClass().getMethod("heldItem");
+            Object heldItem = getHeldItemMethod.invoke(pokemon);
+
+            if (heldItem != null) {
+                // It's an ItemStack
+                Method isEmptyMethod = heldItem.getClass().getMethod("isEmpty");
+                if ((Boolean) isEmptyMethod.invoke(heldItem)) {
+                    return "None";
+                }
+
+                Method getHoverNameMethod = heldItem.getClass().getMethod("getHoverName");
+                Object name = getHoverNameMethod.invoke(heldItem);
+                if (name != null) {
+                    Method getStringMethod = name.getClass().getMethod("getString");
+                    return (String) getStringMethod.invoke(name);
+                }
+            }
+        } catch (Exception e) {
+            Player2NPC.LOGGER.debug("Error getting Pokemon held item: {}", e.getMessage());
+        }
+        return "None";
+    }
+
+    /**
+     * Get full Pokemon stats summary for cobblestats command.
+     */
+    public static String getFullPokemonStats(Entity entity) {
+        if (!isPokemon(entity)) return null;
+
+        StringBuilder sb = new StringBuilder();
+
+        String name = getPokemonDisplayName(entity);
+        String species = getPokemonSpeciesName(entity);
+        int level = getPokemonLevel(entity);
+        boolean shiny = isPokemonShiny(entity);
+
+        // Header
+        sb.append("=== ");
+        if (!name.equals(species)) {
+            sb.append(name).append(" the ");
+        }
+        if (shiny) sb.append("*Shiny* ");
+        sb.append(species).append(" ===\n");
+
+        sb.append("Level: ").append(level).append("\n");
+        sb.append("HP: ").append(getPokemonHP(entity)).append("\n");
+        sb.append("Nature: ").append(getPokemonNature(entity)).append("\n");
+        sb.append("Ability: ").append(getPokemonAbility(entity)).append("\n");
+        sb.append("Friendship: ").append(getPokemonFriendship(entity)).append("/255\n");
+        sb.append("Held Item: ").append(getPokemonHeldItem(entity)).append("\n");
+        sb.append("IVs: ").append(getPokemonIVs(entity)).append("\n");
+        sb.append("EVs: ").append(getPokemonEVs(entity));
+
+        return sb.toString();
+    }
+
+    /**
+     * Get brief Pokemon stats for quick display.
+     */
+    public static String getBriefPokemonStats(Entity entity) {
+        if (!isPokemon(entity)) return null;
+
+        String name = getPokemonDisplayName(entity);
+        int level = getPokemonLevel(entity);
+        String nature = getPokemonNature(entity);
+        String ability = getPokemonAbility(entity);
+        String ivs = getPokemonIVs(entity);
+
+        return String.format("%s (Lv.%d) - %s, %s | IVs: %s",
+                name, level, nature, ability, ivs);
+    }
 }

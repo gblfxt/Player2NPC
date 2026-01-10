@@ -417,6 +417,25 @@ SOPHISTICATED BACKPACKS (if mod is installed):
             return action;
         }
 
+        // Portal/dimension travel commands
+        if (lower.contains("portal") || lower.contains("nether") || lower.contains("the end") ||
+            lower.contains("dimension") || lower.contains("through the")) {
+            CompanionAction action = new CompanionAction("portal", text);
+            // Determine if they want to go through or just follow
+            if (lower.contains("go through") || lower.contains("enter") || lower.contains("use") ||
+                lower.contains("step through") || lower.contains("take the") || lower.contains("use the")) {
+                action.setParameter("action", "enter");
+            } else if (lower.contains("follow") || lower.contains("come with") || lower.contains("follow me")) {
+                action.setParameter("action", "follow");
+            } else if (lower.contains("stay") || lower.contains("wait") || lower.contains("don't")) {
+                action.setParameter("action", "stay");
+            } else {
+                // Default to enter if they mention portal
+                action.setParameter("action", "enter");
+            }
+            return action;
+        }
+
         // ME network gear retrieval
         if (lower.contains("get iron") || lower.contains("iron set") || lower.contains("iron gear") ||
             lower.contains("iron armor") || lower.contains("craft iron")) {
@@ -617,6 +636,51 @@ SOPHISTICATED BACKPACKS (if mod is installed):
             } else {
                 action.setParameter("subaction", "info");
             }
+            return action;
+        }
+
+        // Elevator commands
+        if (lower.contains("elevator") || lower.contains("lift") ||
+            (lower.contains("go") && (lower.contains("up") || lower.contains("down")) && lower.contains("floor"))) {
+            CompanionAction action = new CompanionAction("elevator", text);
+            if (lower.contains("up") || lower.contains("ascend") || lower.contains("higher")) {
+                action.setParameter("direction", "up");
+            } else if (lower.contains("down") || lower.contains("descend") || lower.contains("lower")) {
+                action.setParameter("direction", "down");
+            } else {
+                action.setParameter("direction", "up"); // Default to up
+            }
+            return action;
+        }
+
+        // Pokemon stats commands (Cobblemon)
+        if (lower.contains("cobblestats") || lower.contains("pokemon stats") ||
+            lower.contains("check pokemon") || lower.contains("pokemon ivs") ||
+            lower.contains("pokemon evs") || lower.contains("mon stats") ||
+            (lower.contains("stats") && (lower.contains("pokemon") || lower.contains("cobble")))) {
+            CompanionAction action = new CompanionAction("cobblestats", text);
+
+            // Check if they want brief or full stats
+            if (lower.contains("brief") || lower.contains("quick") || lower.contains("short")) {
+                action.setParameter("detail", "brief");
+            } else if (lower.contains("full") || lower.contains("detailed") || lower.contains("all")) {
+                action.setParameter("detail", "full");
+            } else {
+                action.setParameter("detail", "full"); // Default to full
+            }
+
+            // Check if they specified a Pokemon name
+            String[] words = text.split("\\s+");
+            for (int i = 0; i < words.length; i++) {
+                String word = words[i].toLowerCase();
+                if (word.equals("on") || word.equals("for") || word.equals("of")) {
+                    if (i + 1 < words.length) {
+                        action.setParameter("target", words[i + 1]);
+                        break;
+                    }
+                }
+            }
+
             return action;
         }
 

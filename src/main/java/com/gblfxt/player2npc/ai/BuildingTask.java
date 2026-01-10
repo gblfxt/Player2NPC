@@ -158,25 +158,73 @@ public class BuildingTask {
         Map<Item, Integer> required = blueprint.getRequiredMaterials();
         Map<Item, Integer> available = countInventoryItems();
 
+        // Log what we have in inventory
+        Player2NPC.LOGGER.info("[Building] Inventory contents:");
+        for (Map.Entry<Item, Integer> entry : available.entrySet()) {
+            Player2NPC.LOGGER.info("  - {} x{}", BuiltInRegistries.ITEM.getKey(entry.getKey()), entry.getValue());
+        }
+
         for (Map.Entry<Item, Integer> entry : required.entrySet()) {
             Item item = entry.getKey();
             int needed = entry.getValue();
             int have = available.getOrDefault(item, 0);
 
+            // Also check for equivalent items (e.g., cobblestone variants)
+            have += countEquivalentItems(item, available);
+
             if (have < needed) {
                 missingMaterials.put(item, needed - have);
+                Player2NPC.LOGGER.info("[Building] Missing {} x{} (have {})",
+                    BuiltInRegistries.ITEM.getKey(item), needed - have, have);
             }
         }
 
         if (missingMaterials.isEmpty()) {
-            Player2NPC.LOGGER.info("Have all materials! Starting site prep.");
+            Player2NPC.LOGGER.info("[Building] Have all materials! Starting site prep.");
             changeState(BuildState.SITE_PREP);
         } else {
-            Player2NPC.LOGGER.info("Missing {} material types, starting gathering.", missingMaterials.size());
+            Player2NPC.LOGGER.info("[Building] Missing {} material types, starting gathering.", missingMaterials.size());
             // Pick first missing material
             selectNextGatherTarget();
             changeState(BuildState.GATHERING);
         }
+    }
+
+    /**
+     * Count equivalent items that can substitute for the required item.
+     * For example, deepslate cobblestone can substitute for cobblestone.
+     */
+    private int countEquivalentItems(Item required, Map<Item, Integer> available) {
+        String requiredName = BuiltInRegistries.ITEM.getKey(required).getPath();
+        int extra = 0;
+
+        for (Map.Entry<Item, Integer> entry : available.entrySet()) {
+            Item item = entry.getKey();
+            if (item == required) continue; // Already counted
+
+            String itemName = BuiltInRegistries.ITEM.getKey(item).getPath();
+
+            // Cobblestone variants
+            if (requiredName.equals("cobblestone")) {
+                if (itemName.contains("cobblestone") || itemName.equals("blackstone")) {
+                    extra += entry.getValue();
+                }
+            }
+            // Planks variants
+            else if (requiredName.contains("planks")) {
+                if (itemName.contains("planks")) {
+                    extra += entry.getValue();
+                }
+            }
+            // Log variants
+            else if (requiredName.contains("log")) {
+                if (itemName.contains("log") && !itemName.contains("stripped")) {
+                    extra += entry.getValue();
+                }
+            }
+        }
+
+        return extra;
     }
 
     private void selectNextGatherTarget() {
@@ -604,6 +652,7 @@ public class BuildingTask {
     }
 
     private boolean consumeMaterial(Item item) {
+        // First try exact match
         for (int i = 0; i < companion.getContainerSize(); i++) {
             ItemStack stack = companion.getItem(i);
             if (stack.getItem() == item) {
@@ -611,6 +660,40 @@ public class BuildingTask {
                 if (stack.isEmpty()) {
                     companion.setItem(i, ItemStack.EMPTY);
                 }
+                return true;
+            }
+        }
+
+        // Try equivalent items
+        String requiredName = BuiltInRegistries.ITEM.getKey(item).getPath();
+        for (int i = 0; i < companion.getContainerSize(); i++) {
+            ItemStack stack = companion.getItem(i);
+            if (stack.isEmpty()) continue;
+
+            String stackName = BuiltInRegistries.ITEM.getKey(stack.getItem()).getPath();
+            boolean isEquivalent = false;
+
+            // Cobblestone variants
+            if (requiredName.equals("cobblestone") &&
+                (stackName.contains("cobblestone") || stackName.equals("blackstone"))) {
+                isEquivalent = true;
+            }
+            // Planks variants
+            else if (requiredName.contains("planks") && stackName.contains("planks")) {
+                isEquivalent = true;
+            }
+            // Log variants
+            else if (requiredName.contains("log") && stackName.contains("log") && !stackName.contains("stripped")) {
+                isEquivalent = true;
+            }
+
+            if (isEquivalent) {
+                stack.shrink(1);
+                if (stack.isEmpty()) {
+                    companion.setItem(i, ItemStack.EMPTY);
+                }
+                Player2NPC.LOGGER.debug("[Building] Used {} as substitute for {}",
+                    stackName, requiredName);
                 return true;
             }
         }
