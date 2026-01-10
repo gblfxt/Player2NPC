@@ -232,6 +232,50 @@ Companions detect and can use:
 
 ---
 
+## Ultimine-Style Mining
+
+Companions use intelligent mining similar to FTB Ultimine:
+
+### Vein Mining
+When mining ores, companions automatically detect and mine the entire connected vein:
+- Finds all connected blocks of the same ore type (including diagonals)
+- Matches deepslate variants with regular ores
+- Up to 32 blocks per vein
+- Logs: `[Sam] Vein mining: 8 blocks queued`
+
+### Tree Felling
+When chopping logs, companions fell the entire tree:
+- Finds all connected logs of the same wood type
+- Also breaks leaves (optional cleanup)
+- Breaks from top down (natural tree falling)
+- Up to 64 blocks per tree
+
+### Automatic Tool Selection
+Companions equip the best tool before mining:
+- **Pickaxe** for ores, stone, cobblestone, bricks
+- **Axe** for logs, wood, planks, fences
+- **Shovel** for dirt, sand, gravel
+- **Hoe** for leaves, hay, moss
+
+Tool tier affects mining speed:
+| Tier | Speed Multiplier |
+|------|------------------|
+| Wood/Gold | 2x |
+| Stone | 4x |
+| Iron | 6x |
+| Diamond | 8x |
+| Netherite | 9x |
+| Allthemodium+ | 10-12x |
+
+### Crop Harvesting
+Companions can harvest and replant crops:
+- Detects mature crops (wheat, carrots, potatoes, etc.)
+- Harvests pumpkins and melons
+- Picks sweet berries when ready
+- **Auto-replants** from harvested seeds
+
+---
+
 ## Hunting System
 
 Companions intelligently hunt for food:

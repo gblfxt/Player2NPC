@@ -44,6 +44,12 @@ public class MiningTask {
     // Mining speeds (ticks to break)
     private static final int BASE_MINING_TICKS = 30; // About 1.5 seconds base
 
+    // Ultimine-style mining queue
+    private final Queue<BlockPos> miningQueue = new LinkedList<>();
+    private boolean isVeinMining = false;
+    private boolean isTreeFelling = false;
+    private boolean hasEquippedTool = false;
+
     public MiningTask(CompanionEntity companion, String blockName, int count, int searchRadius) {
         this.companion = companion;
         this.targetBlockName = blockName.toLowerCase();
@@ -239,23 +245,47 @@ public class MiningTask {
         // Pick up nearby items
         pickupNearbyItems();
 
-        // If no current target, find one
+        // Get next target from queue or find new one
         if (currentTarget == null || !isValidTarget(currentTarget)) {
-            currentTarget = findNearestTargetBlock();
-            miningProgress = 0;
-            ticksAtCurrentBlock = 0;
-
-            if (currentTarget == null) {
-                ticksSinceLastProgress++;
-                if (ticksSinceLastProgress > 200) { // 10 seconds without finding anything
-                    failed = true;
-                    failReason = "I can't find any more " + targetBlockName + " nearby.";
+            // Try to get from queue first
+            while (!miningQueue.isEmpty()) {
+                BlockPos queued = miningQueue.poll();
+                if (isValidTarget(queued) && isSafeToMine(queued)) {
+                    currentTarget = queued;
+                    break;
                 }
-                return;
+            }
+
+            // If queue is empty, find a new vein/tree
+            if (currentTarget == null) {
+                currentTarget = findNearestTargetBlock();
+                miningProgress = 0;
+                ticksAtCurrentBlock = 0;
+                isVeinMining = false;
+                isTreeFelling = false;
+
+                if (currentTarget == null) {
+                    ticksSinceLastProgress++;
+                    if (ticksSinceLastProgress > 200) { // 10 seconds without finding anything
+                        failed = true;
+                        failReason = "I can't find any more " + targetBlockName + " nearby.";
+                    }
+                    return;
+                }
+
+                // Queue up connected blocks for ultimine-style mining
+                queueConnectedBlocks(currentTarget);
             }
         }
 
         ticksSinceLastProgress = 0;
+
+        // Equip best tool if we haven't yet
+        if (!hasEquippedTool) {
+            BlockState targetState = companion.level().getBlockState(currentTarget);
+            UltimineHelper.equipBestTool(companion, targetState);
+            hasEquippedTool = true;
+        }
 
         // Move towards target
         double distance = companion.position().distanceTo(Vec3.atCenterOf(currentTarget));
@@ -297,7 +327,7 @@ public class MiningTask {
                 companion.swing(companion.getUsedItemHand());
             }
 
-            // Calculate mining time based on block hardness
+            // Calculate mining time based on block hardness and tool
             BlockState state = companion.level().getBlockState(currentTarget);
             int miningTime = calculateMiningTime(state);
 
@@ -309,6 +339,12 @@ public class MiningTask {
                 minedCount++;
                 currentTarget = null;
                 miningProgress = 0;
+
+                // Log progress for veins/trees
+                if ((isVeinMining || isTreeFelling) && !miningQueue.isEmpty()) {
+                    Player2NPC.LOGGER.debug("Ultimine progress: {} mined, {} in queue",
+                        minedCount, miningQueue.size());
+                }
             }
         }
 
@@ -321,9 +357,79 @@ public class MiningTask {
         }
     }
 
+    /**
+     * Queue connected blocks for ultimine-style mining.
+     */
+    private void queueConnectedBlocks(BlockPos start) {
+        BlockState state = companion.level().getBlockState(start);
+        String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+
+        // Check if this is a log (tree felling)
+        if (blockId.contains("log") || blockId.contains("wood")) {
+            List<BlockPos> tree = UltimineHelper.findTree(companion.level(), start);
+            if (tree.size() > 1) {
+                isTreeFelling = true;
+                // Skip the first one (it's our current target)
+                for (int i = 1; i < tree.size() && miningQueue.size() < 64; i++) {
+                    BlockPos pos = tree.get(i);
+                    if (isSafeToMine(pos)) {
+                        miningQueue.add(pos);
+                    }
+                }
+                Player2NPC.LOGGER.info("[{}] Tree felling: {} blocks queued",
+                    companion.getCompanionName(), miningQueue.size() + 1);
+            }
+            return;
+        }
+
+        // Check if this is an ore (vein mining)
+        if (blockId.contains("ore")) {
+            List<BlockPos> vein = UltimineHelper.findConnectedBlocks(companion.level(), start, 32);
+            if (vein.size() > 1) {
+                isVeinMining = true;
+                // Skip the first one (it's our current target)
+                for (int i = 1; i < vein.size(); i++) {
+                    BlockPos pos = vein.get(i);
+                    if (isSafeToMine(pos)) {
+                        miningQueue.add(pos);
+                    }
+                }
+                Player2NPC.LOGGER.info("[{}] Vein mining: {} blocks queued",
+                    companion.getCompanionName(), miningQueue.size() + 1);
+            }
+        }
+    }
+
     private boolean isValidTarget(BlockPos pos) {
         BlockState state = companion.level().getBlockState(pos);
-        return targetBlocks.contains(state.getBlock());
+
+        // Direct match
+        if (targetBlocks.contains(state.getBlock())) {
+            return true;
+        }
+
+        // During tree felling, also accept leaves
+        if (isTreeFelling) {
+            String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+            if (blockId.contains("log") || blockId.contains("leaves") || blockId.contains("wood")) {
+                return true;
+            }
+        }
+
+        // During vein mining, accept deepslate variants
+        if (isVeinMining) {
+            String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+            for (Block target : targetBlocks) {
+                String targetId = BuiltInRegistries.BLOCK.getKey(target).getPath();
+                String normalizedTarget = targetId.replace("deepslate_", "");
+                String normalizedBlock = blockId.replace("deepslate_", "");
+                if (normalizedTarget.equals(normalizedBlock)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private BlockPos findNearestTargetBlock() {
@@ -385,8 +491,18 @@ public class MiningTask {
         if (hardness < 0) {
             return 1000; // Unbreakable
         }
-        // Scale mining time with hardness
-        return (int) (BASE_MINING_TICKS + hardness * 10);
+
+        // Base time scaled with hardness
+        int baseTime = (int) (BASE_MINING_TICKS + hardness * 10);
+
+        // Apply tool speed multiplier
+        float toolMultiplier = UltimineHelper.getMiningSpeedMultiplier(companion, state);
+        if (toolMultiplier > 1.0f) {
+            baseTime = (int) (baseTime / toolMultiplier);
+        }
+
+        // Minimum 5 ticks (0.25 seconds)
+        return Math.max(5, baseTime);
     }
 
     private void breakBlock(BlockPos pos) {
